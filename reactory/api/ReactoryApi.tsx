@@ -1,0 +1,2033 @@
+import React from 'react';
+import PropTypes from 'prop-types';
+import EventEmitter from 'eventemitter3';
+import {Dimensions, Text} from 'react-native';
+//@ts-ignore
+import inspector from 'schema-inspector';
+import uuid from 'uuid';
+import LocalStorage, {
+  AsyncStorageStatic,
+} from '@react-native-community/async-storage';
+import {
+  ApolloClient,
+  gql,
+  NormalizedCacheObject,
+  Resolvers,
+  MutationOptions,
+  ApolloQueryResult,
+} from '@apollo/client';
+// import localForage from 'localforage';
+
+import lodash, {intersection, isArray, isEmpty, isNil, template} from 'lodash';
+import moment from 'moment';
+import objectMapper from 'object-mapper';
+import {
+  getAvatar,
+  getOrganizationLogo,
+  getUserFullName,
+  ThemeResource,
+  injectResources,
+  omitDeep,
+  makeSlug,
+  deepEquals,
+  CDNResource,
+} from '../util';
+import amq from '../amq';
+import * as RestApi from './RestApi';
+import GraphQL from './graphql';
+import icons from '../assets/icons';
+//@ts-ignore
+import humanNumber from 'human-number';
+//@ts-ignore
+import humanDate from 'human-date';
+import {withApi} from './ReactoryProvider';
+import {ReactoryLoggedInUser, anonUser, storageKeys} from './local';
+import ReactoryApolloClient from './ReactoryApolloClient';
+
+import {Reactory} from '../types/reactory';
+
+const pluginDefinitionValid = (definition: any) => {
+  const pass: any = {
+    nameSpace: false,
+    name: false,
+    component: false,
+    version: false,
+  };
+
+  if (isNil(definition) === true) {
+    return false;
+  }
+
+  Object.keys(definition).forEach((property: string) => {
+    pass[property] = isNil(definition[property]) === false;
+  });
+
+  return pass.nameSpace && pass.name && pass.component && pass.version;
+};
+
+export const ReactoryApiEventNames = {
+  onLogout: 'loggedOut',
+  onLogin: 'loggedIn',
+  onPluginLoaded: 'onPluginLoaded',
+  onApiStatusUpdate: 'onApiStatusUpdate',
+  onRouteChanged: 'onRouteChanged',
+  onShowNotification: 'onShowNotification',
+  onThemeChanged: 'onThemeChanged',
+};
+
+export const EmptyComponent = () => {
+  return null;
+};
+
+const componentFqn = (componentDef: Reactory.IComponentFqnDefinition) => {
+  const {name, nameSpace, version} = componentDef;
+  return `${nameSpace}.${name}@${version}`;
+};
+
+// export const reactoryDomNode = () => {
+//   const domNode = document.createElement('div');
+//   domNode.setAttribute('reactory', 'generated');
+//   domNode.id = `reactory_modal_widget_${uuid().replace('-', '_')}`;
+//   return domNode;
+// };
+
+/**
+ * This function allows you to pass in a templated object definition.
+ * The function iterates over every propery of the object and then
+ * checks the value of that property.
+ *
+ * If the property is a string, we check for a template pattern ${...}
+ * and then parse the template against the input propety bag data.
+ * @param templateObject
+ * @param props
+ */
+export const parseTemplateObject = (
+  templateObject: any,
+  props: any,
+): Object => {
+  if (templateObject === null || templateObject === undefined) {
+    return templateObject;
+  }
+
+  let _$ret: any = {};
+
+  Object.keys(templateObject).forEach((ep: string) => {
+    let toep: any = typeof templateObject[ep];
+    switch (toep) {
+      case 'string': {
+        if (templateObject[ep].indexOf('${') >= 0) {
+          _$ret[ep] = template(templateObject[ep])(props);
+        } else {
+          _$ret[ep] = templateObject[ep];
+        }
+        break;
+      }
+      case 'object': {
+        _$ret[ep] = parseTemplateObject(templateObject[ep], props);
+        break;
+      }
+      default: {
+        _$ret[ep] = templateObject[ep];
+      }
+    }
+  });
+
+  return _$ret;
+};
+
+export const componentPartsFromFqn = (fqn: string) => {
+  if (typeof fqn === 'string' && fqn.length > 0) {
+    if (fqn.indexOf('.') >= 1) {
+      let _fqn = fqn;
+      const atpos = fqn.indexOf('@');
+      const componentMeta = {
+        nameSpace: '',
+        name: '',
+        version: '',
+      };
+
+      if (atpos >= 3) {
+        //shortest possible compnonent name a.b@1
+        const versionParts = fqn.split('@');
+        componentMeta.version = versionParts[1];
+        _fqn = versionParts[0];
+      }
+
+      const nameParts = _fqn.split('.');
+
+      componentMeta.nameSpace = nameParts[0];
+      componentMeta.name = nameParts[1];
+
+      return componentMeta;
+    }
+  }
+  throw new Error(
+    'Component FQN not valid, must have at least nameSpace.name with version being options i.e. nameSpace.name@version',
+  );
+};
+export interface ReactoryApiUtils {
+  omitDeep: Function;
+  queryString: {
+    parse: (queryString: string) => object;
+  };
+  hashCode: Function;
+  injectResources: Function;
+  componentFqn: Function;
+  pluginDefinitionValid: Function;
+  moment: Function;
+  objectMapper: Function;
+  template: Function;
+  templateObject(item: Object, props: any): Object;
+  humanNumber: Function;
+  inspector: {
+    sanitize: (sanitizeSchema: any, data: any) => void;
+    validate: (validationSchema: any, data: any) => any;
+  };
+  gql: Function;
+  humanDate: Function;
+  slugify: Function;
+  deepEquals: Function;
+  lodash: any;
+  classNames: Function;
+  uuid: () => string;
+  collectData: (forms: any[], shape: any) => any;
+  localForage: AsyncStorageStatic;
+}
+
+export interface WindowSizeSpec {
+  innerHeight: number;
+  innerWidth: number;
+  outerHeight: number;
+  outerWidth: number;
+  view: string;
+  resolution: {
+    height: number;
+    width: number;
+  };
+  ratio: number;
+  size: string;
+}
+
+export interface _dynamic {
+  [key: string]: any;
+}
+
+interface ReactoryTheme {
+  [key: string]: any;
+}
+
+interface IComponentRegister {
+  [key: string]: Reactory.IComponentFqnDefinition;
+}
+
+const FORM_QUERY_SEGMENTS = {
+  FORM_CORE_ELEMENTS: `
+    id
+    uiFramework
+    uiSupport
+    registerAsComponent
+    title
+    tags
+    display
+    name
+    nameSpace
+    description
+    version
+    className
+    style
+    helpTopics
+    defaultUiSchemaKey
+    defaultFormValue
+    roles
+  `,
+  FORM_SCHEMAS: `
+    schema
+    uiSchema
+    sanitizeSchema
+    modules {
+      id
+      src
+      url
+      signed
+      signature
+      compiler
+      compilerOptions
+      roles
+    }
+    uiResources {
+      id
+      name
+      type
+      required
+      expr
+      uri
+    }
+    uiSchemas {
+      id
+      title
+      key
+      description
+      icon
+      graphql {
+        query
+        mutation
+        queries
+        clientResolvers
+      }
+      modes
+    }
+    graphql {
+      query
+      mutation
+      queries
+      clientResolvers
+    }
+  `,
+  ADDITIONAL: `
+    components  
+    defaultPdfReport
+    defaultExport
+    exports
+    reports    
+    refresh
+    widgetMap {
+      componentFqn
+      component
+      widget
+    }
+    backButton
+    workflow
+    noHtml5Validate
+    formContext
+    eventBubbles {
+      eventName
+      action
+      functionFqn
+    }
+    componentDefs
+    queryStringMap
+    dependencies {
+      fqn
+      props
+      propsMap
+      componentType
+    }
+  `,
+};
+
+class ReactoryApi extends EventEmitter implements _dynamic {
+  $windowSize?: WindowSizeSpec = undefined;
+  $user: any;
+  history: any;
+  queries: any;
+  mutations: any;
+  props: any;
+  componentRegister: IComponentRegister;
+  client?: ApolloClient<NormalizedCacheObject> = undefined;
+  login: (username: string, password: string) => void;
+  // register: Function = null;
+  // reset: Function = null;
+  // forgot: Function = null;
+  utils: ReactoryApiUtils;
+  //companyWithId: Function;
+  $func: any;
+  rest: any;
+  tokenValidated: boolean = false;
+  lastValidation: number;
+  tokenValid: boolean = false;
+  getAvatar: Function;
+  getOrganizationLogo: Function;
+  getUserFullName: Function;
+  getThemeResource: (path?: string) => string;
+  getCDNResource: (path: string) => string;
+  CDN_ROOT: string = process.env.REACT_APP_CDN || 'http://localhost:4000/cdn';
+  API_ROOT: string =
+    process.env.REACT_APP_API_ENDPOINT || 'http://localhost:4000';
+  CLIENT_KEY?: string = process.env.REACT_APP_CLIENT_KEY;
+  CLIENT_PWD?: string = process.env.REACT_APP_CLIENT_PASSWORD;
+  formSchemas: Reactory.IReactoryForm[];
+  formValidationMaps: any;
+  formTranslationMaps: any;
+  formSchemaLastFetch?: moment.Moment;
+
+  assets: Object;
+  amq: any;
+  statistics: any;
+  __form_instances: any = null;
+  flushIntervalTimer: any = null;
+  __REACTORYAPI: boolean = true;
+  publishingStats?: boolean;
+  reduxStore: any;
+  muiTheme: any;
+  queryObject: any;
+  queryString: any;
+  objectToQueryString?: Function;
+  clearCache?: () => void;
+  ws_link: any;
+
+  __uuid?: string;
+  constructor(props: any) {
+    super();
+
+    this.history = null;
+    this.props = props;
+    this.componentRegister = {};
+    this.queries = GraphQL.queries;
+    this.mutations = GraphQL.mutations;
+    this.login = RestApi.login.bind(this);
+    // this.companyWithId = RestApi.companyWithId;
+    // this.register = RestApi.register;
+    // this.reset = RestApi.reset;
+    // this.forgot = RestApi.forgot;
+    this.forms = this.forms.bind(this);
+    this.form = this.form.bind(this);
+
+    this.utils = {
+      omitDeep,
+      queryString: {
+        parse: () => {
+          return {};
+        },
+      },
+      hashCode: (inputString: string) => {
+        let i = 0;
+        let h = 0;
+        for (i < inputString.length; (i += 1); ) {
+          // eslint-disable-next-line no-bitwise
+          h = (Math.imul(31, h) + inputString.charCodeAt(i)) | 0;
+          return h;
+        }
+      },
+      injectResources,
+      componentFqn,
+      //componentDefinitionFromFqn,
+      pluginDefinitionValid,
+      lodash,
+      moment,
+      //@ts-ignore
+      objectMapper,
+      template,
+      humanNumber,
+      inspector,
+      gql,
+      //@ts-ignore
+      humanDate,
+      slugify: makeSlug,
+      deepEquals,
+      templateObject: parseTemplateObject,
+      //classNames,
+      //@ts-ignore
+      uuid,
+      collectData: (forms: any[], shape: any) => {
+        let data = forms.map(reactoryForm => {
+          if (reactoryForm.formRef && reactoryForm.formRef.current) {
+            return reactoryForm.formRef.current.state.formData;
+          }
+        });
+
+        if (shape) {
+          return objectMapper.merge(data, shape);
+        }
+        return data;
+      },
+      localStorage: LocalStorage,
+    };
+    this.$func = {
+      'core.NullFunction': (params: any) => {
+        this.log('An extension function was not found', [params], 'warning');
+        return 0;
+      },
+    };
+    this.registerFunction = this.registerFunction.bind(this);
+    this.rest = {
+      json: {
+        get: RestApi.getRemoteJson,
+        post: RestApi.postRemoteJson,
+      },
+      text: {
+        get: RestApi.getContent,
+      },
+    };
+    this.tokenValidated = false;
+    this.tokenValid = false;
+    this.lastValidation = 0;
+    this.validateToken = this.validateToken.bind(this);
+    this.resetPassword = this.resetPassword.bind(this);
+    this.logout = this.logout.bind(this);
+    this.setUser = this.setUser.bind(this);
+    this.afterLogin = this.afterLogin.bind(this);
+    this.registerComponent = this.registerComponent.bind(this);
+    this.getComponent = this.getComponent.bind(this);
+    // this.mountComponent = this.mountComponent.bind(this);
+    // this.showModalWithComponent = this.showModalWithComponent.bind(this);
+    this.getComponents = this.getComponents.bind(this);
+    this.getGlobalComponents = this.getGlobalComponents.bind(this);
+    this.status = this.status.bind(this);
+    this.getAvatar = getAvatar;
+    this.getOrganizationLogo = getOrganizationLogo;
+    this.getUserFullName = getUserFullName;
+    this.getTheme = this.getTheme.bind(this);
+    this.getRoutes = this.getRoutes.bind(this);
+    this.getNotFoundComponent = this.getNotFoundComponent.bind(this);
+    this.isAnon = this.isAnon.bind(this);
+    this.raiseFormCommand = this.raiseFormCommand.bind(this);
+    this.onFormCommandEvent = this.onFormCommandEvent.bind(this);
+    this.startWorkFlow = this.startWorkFlow.bind(this);
+    this.CDN_ROOT = process.env.REACT_APP_CDN || 'http://localhost:4000/cdn';
+    this.API_ROOT =
+      process.env.REACT_APP_API_ENDPOINT || 'http://localhost:4000';
+    this.CLIENT_KEY = process.env.REACT_APP_CLIENT_KEY;
+    this.CLIENT_PWD = process.env.REACT_APP_CLIENT_PASSWORD;
+    this.formSchemas = [];
+    this.formValidationMaps = {};
+    this.formTranslationMaps = {};
+    this.formSchemaLastFetch = moment('1970-01-01');
+    this.amq = amq;
+    this.loadComponentWithFQN = this.loadComponentWithFQN.bind(this);
+    this.loadComponent = this.loadComponent.bind(this);
+    this.renderForm = this.renderForm.bind(this);
+    this.graphqlMutation = this.graphqlMutation.bind(this);
+    this.graphqlQuery = this.graphqlQuery.bind(this);
+    this.getLastUserEmail = this.getLastUserEmail.bind(this);
+    this.setLastUserEmail = this.setLastUserEmail.bind(this);
+    this.saveUserLoginCredentials = this.saveUserLoginCredentials.bind(this);
+    this.getUserLoginCredentials = this.getUserLoginCredentials.bind(this);
+    this.setAuthToken = this.setAuthToken.bind(this);
+    this.getAuthToken = this.getAuthToken.bind(this);
+
+    this.assets = {
+      logo: `${this.CDN_ROOT}/themes/${this.CLIENT_KEY}/images/logo.png`,
+      avatar: `${this.CDN_ROOT}/themes/${this.CLIENT_KEY}/images/avatar.png`,
+      icons: {
+        144: `${this.CDN_ROOT}/themes/${this.CLIENT_KEY}/images/icons-144.png`,
+        192: `${this.CDN_ROOT}/themes/${this.CLIENT_KEY}/images/icons-192.png`,
+        512: `${this.CDN_ROOT}/themes/${this.CLIENT_KEY}/images/icons-512.png`,
+      },
+    };
+    this.log = this.log.bind(this);
+    this.stat = this.stat.bind(this);
+    this.flushstats = this.flushstats.bind(this);
+    this.publishstats = this.publishstats.bind(this);
+    this.statistics = {
+      __delta: 0,
+      __keys: [],
+      __lastFlush: null,
+      __flushInterval: 5000,
+      items: {},
+    };
+    this.__form_instances = {};
+    this.trackFormInstance = this.trackFormInstance.bind(this);
+    //bind internal queue listeners
+    this.amq.onReactoryPluginEvent('loaded', (data: any) => {
+      this.emit(ReactoryApiEventNames.onPluginLoaded, data);
+    });
+    this.flushIntervalTimer = setInterval(
+      this.flushstats.bind(this, true),
+      5000,
+    );
+    this.__REACTORYAPI = true;
+    this.goto = this.goto.bind(this);
+    this.createNotification = this.createNotification.bind(this);
+    this.getThemeResource = ThemeResource;
+    this.getCDNResource = CDNResource;
+    this.getUser = this.getUser.bind(this);
+    this.extendClientResolver = this.extendClientResolver.bind(this);
+    this.setFormTranslationMaps = this.setFormTranslationMaps.bind(this);
+    this.setFormValidationMaps = this.setFormValidationMaps.bind(this);
+    this.clearStoreAndCache = this.clearStoreAndCache.bind(this);
+    this.init = this.init.bind(this);
+    this.getSizeSpec = this.getSizeSpec.bind(this);
+    this.getThemeMode = this.getThemeMode.bind(this);
+    // LocalStorage.getItem('$reactory_instance_id$').then(v => {
+    //   if (this.__uuid === null) {
+    //     this.__uuid = uuid.v4();
+    //     LocalStorage.setItem('$reactory_instance_id$', this.__uuid);
+    //   }
+    // });
+  }
+
+  async init() {
+    const {client, ws_link, clearCache} = await ReactoryApolloClient();
+
+    this.clearCache = clearCache;
+    this.client = client;
+    this.ws_link = ws_link;
+
+    return this;
+  }
+
+  clearStoreAndCache() {
+    if (this.client) {
+      this.client.resetStore();
+    }
+    if (this.clearCache) {
+      this.clearCache();
+    }
+  }
+
+  async getThemeMode() {
+    let mode = await LocalStorage.getItem('$reactory$theme_mode');
+    if (!mode) {
+      mode = 'light';
+    }
+
+    return mode;
+  }
+
+  getSizeSpec() {
+    const {width, height, scale} = Dimensions.get('window');
+
+    const innerHeight = height,
+      outerHeight = height,
+      innerWidth = width,
+      outerWidth = width;
+
+    let size_spec: any = {
+      innerHeight,
+      innerWidth,
+      outerHeight,
+      outerWidth,
+      scale,
+    };
+
+    return size_spec;
+  }
+
+  setFormTranslationMaps(maps: any) {
+    this.formTranslationMaps = {...this.formTranslationMaps, ...maps};
+  }
+
+  setFormValidationMaps(maps: any) {
+    this.formValidationMaps = {...this.formValidationMaps, ...maps};
+  }
+
+  extendClientResolver(resolvers: Resolvers) {
+    const {client} = this;
+    if (client && resolvers) {
+      client.addResolvers(resolvers);
+    }
+  }
+
+  createNotification(title: string, options: any = {}) {
+    const that = this;
+    that.log('_____ CREATE NOTIFICATION ______', {title, options}, 'debug');
+    let defaultNotificationProps = {
+      title,
+      type: options.type || 'info',
+      showInAppNotification: true,
+      config: {
+        canDismiss: true,
+        timeOut: 2500,
+      },
+    };
+
+    if (options.props) {
+      defaultNotificationProps.config = {
+        ...defaultNotificationProps.config,
+        ...options.config,
+      };
+    }
+
+    if (options.showInAppNotification !== false) {
+      that.emit(ReactoryApiEventNames.onShowNotification, {
+        title: title,
+        type: options.type,
+        config: {...options.config, ...options.props},
+      });
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const defaultNotificationProperties = {
+      title: 'Reactory Notification',
+      body: 'Reactory Notification Body',
+      icon: `${ThemeResource('images/favicon.ico')}`,
+      via: 'NotificationApi',
+    };
+
+    // const checkNotificationPromise = () => {
+    //   try {
+    //     Notification.requestPermission().then();
+    //   } catch (e) {
+    //     return false;
+    //   }
+    //   return true;
+    // };
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const requestPermission = () => {
+      // if (checkNotificationPromise() === true) {
+      //   Notification.requestPermission()
+      //     .then((permission) => {
+      //       if (permission === "granted") {
+      //         that.createNotification(title, { ...defaultNotificationProperties, ...options, body: options.text || "" });
+      //       }
+      //     })
+      // } else {
+      //   Notification.requestPermission(function (permission) {
+      //     if (permission === "granted") {
+      //       that.createNotification(title, { ...defaultNotificationProperties, ...options, body: options.text || "" });
+      //     }
+      //   });
+      // }
+    };
+
+    // if (window && window.Notification) {
+    //   switch (Notification.permission) {
+    //     case 'denied': {
+    //       //denied notificaitons, use fallback
+    //       // this.amq.raiseFormCommand("reactory.core.display.notification",
+    //       //   {
+    //       //     title: title,
+    //       //     options: {
+    //       //       ...defaultNotificationProperties,
+    //       //       ...options
+    //       //     }
+    //       //   });
+    //       // return;
+    //       that.emit(ReactoryApiEventNames.onShowNotification, {
+    //         title: title,
+    //         type: options.type,
+    //         config: options.props,
+    //       });
+    //       return;
+    //     }
+    //     case 'granted': {
+    //       let notification = new Notification(title, {
+    //         ...defaultNotificationProperties,
+    //         ...options,
+    //         body: options.text,
+    //       });
+    //       setTimeout(notification.close.bind(notification), 4000);
+    //       return;
+    //     }
+    //     case 'default':
+    //     default: {
+    //       requestPermission();
+    //     }
+    //   }
+    // } else {
+    //   this.log(
+    //     'Notification API not supported in this browser',
+    //     {...defaultNotificationProperties, ...options},
+    //     'warning',
+    //   );
+    // }
+  }
+
+  goto(where = '/', state = {__t: new Date().valueOf()}) {
+    if (this.history && this.history) {
+      this.history.replace({pathname: where, state});
+      this.emit(ReactoryApiEventNames.onRouteChanged, {
+        path: where,
+        state,
+        where,
+      });
+    }
+  }
+
+  registerFunction(
+    fqn: string,
+    functionReference: Function,
+    requiresApi = false,
+    signature = '< signature-not-set />',
+  ) {
+    this.log(
+      `${signature} Registering function ${fqn}`,
+      [functionReference, requiresApi],
+      'debug',
+    );
+    if (typeof functionReference === 'function') {
+      if (requiresApi === true) {
+        this.$func[fqn] = (props: any) => {
+          return functionReference({...props, api: this, reactory: this});
+        };
+      } else {
+        this.$func[fqn] = functionReference;
+      }
+    }
+  }
+
+  log(
+    message: string,
+    params: any = [],
+    kind: string = 'log',
+    formatting = '',
+  ) {
+    try {
+      switch (kind) {
+        case 'log':
+        case 'debug':
+          //formatting = 'color: grey;';
+          break;
+        case 'error':
+          //formatting = 'color: red; font-weight: bold;';
+          break;
+        case 'warn': {
+          //formatting = 'color: yellow, font-weight: bold;';
+          break;
+        }
+        case 'info': {
+          // do nothing we good
+          //formatting = 'color: blue';
+          break;
+        }
+        default: {
+          //different kind.. we don't do your kind around here.
+          kind = 'debug';
+          //formatting = 'color: grey;';
+          break;
+        }
+      }
+      const dolog = () =>
+        (params && params.length === 0) || Object.keys(params).length === 0 //@ts-ignore
+          ? console[kind](`%cReactory::${message}`, formatting) //@ts-ignore
+          : console[kind](`%cReactory::${message}`, formatting, params);
+      if (process.env.NODE_ENV !== 'production' && console) {
+        dolog();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  publishstats() {
+    this.publishingStats = true;
+    if (this.statistics.__delta > 0) {
+      this.log(
+        `Flushing Collected Statistics (${this.statistics.__delta}) deltas across (${this.statistics.__keys.length}) keys`,
+        [],
+        'debug',
+      );
+      const entries = this.statistics.__keys.map((key: string) => ({
+        key,
+        stat: this.statistics.items[key],
+      }));
+      this.graphqlMutation(
+        `
+          mutation PublishStatistics($entries: [StatisticsInput]!) {
+            CorePublishStatistics(entries: $entries)
+          }
+        `,
+        {
+          entries,
+        },
+      )
+        .then(publishResult => {
+          this.statistics = {
+            __delta: 0,
+            __keys: [],
+            __lastFlush: null,
+            __flushInterval: this.statistics.__flushInterval,
+            items: {},
+          };
+          this.log(
+            'Statistics published and flushed',
+            [publishResult],
+            'debug',
+          );
+          this.publishingStats = false;
+        })
+        .catch(error => {
+          this.log(error.message, error, 'error');
+          this.publishingStats = false;
+        });
+    }
+  }
+
+  flushstats(save: boolean) {
+    if (save === true) {
+      this.publishstats();
+    } else {
+      this.statistics = {
+        __delta: 0,
+        __keys: [],
+        __lastflush: null,
+        __flushinterval: this.statistics.__flushinterval,
+        items: {},
+      };
+    }
+  }
+
+  stat(key: string, statistic: any) {
+    try {
+      if (
+        this.statistics &&
+        this.statistics.items &&
+        this.statistics.items[key]
+      ) {
+        this.statistics.items[key] = {
+          ...this.statistics.items[key],
+          ...statistic,
+        };
+      } else {
+        this.statistics.items[key] = statistic;
+        this.statistics.__keys.push(key);
+      }
+      this.statistics.__delta += 1;
+    } catch (statisticsCollectionError) {
+      this.log(
+        'Error capturing statistic',
+        {key, statistic, statisticsCollectionError},
+        'error',
+      );
+    }
+  }
+
+  trackFormInstance(formInstance: any) {
+    const that = this;
+    that.log(
+      'ApiProvider.trackingFormInstance(formInstance)',
+      [formInstance],
+      'debug',
+    );
+    this.__form_instances[formInstance.instance_id] = formInstance;
+    formInstance.on('componentWillUnmount', () => {
+      that.log(
+        'ApiProvider.trackingFormInstance(formInstance).on("componentWillUnmount")',
+        [formInstance],
+        'debug',
+      );
+      delete that.__form_instances[formInstance.state._instance_id];
+    });
+  }
+
+  graphqlMutation(mutation: string, variables: any, refetchQueries: any = []) {
+    const that = this;
+    let $mutation: any = null;
+    if (typeof mutation === 'string') {
+      try {
+        $mutation = gql(mutation);
+      } catch (gqlError) {
+        that.log(
+          'Error occurred while creating the mutation document from input',
+          {mutation},
+          'error',
+        );
+      }
+    } else {
+      $mutation = mutation;
+    }
+
+    return new Promise((resolve, reject) => {
+      let mutation_options: MutationOptions<any, any> = {
+        mutation: $mutation,
+        variables,
+      };
+      mutation_options.refetchQueries = refetchQueries;
+      if (that.client) {
+        that.client
+          .mutate(mutation_options)
+          .then(result => {
+            resolve(result);
+          })
+          .catch(clientErr => {
+            that.log(
+              `Error occured executing the mutation: ${clientErr.message}`,
+              {$mutation, clientErr},
+              'error',
+            );
+            reject(clientErr);
+          });
+      } else {
+        reject('Client is null');
+      }
+    });
+  }
+
+  graphqlQuery<T>(
+    query: string,
+    variables: any,
+    options: any = {fetchPolicy: 'network-only'},
+    queryDefinition?: Reactory.IReactoryFormQuery,
+  ): Promise<ApolloQueryResult<T>> {
+    const that = this;
+
+    let $query: any = null;
+    if (typeof query === 'string') {
+      try {
+        $query = gql(query);
+      } catch (gqlError) {
+        that.log(
+          'Error occurred while creating the query document from input',
+          {query, gqlError},
+          'error',
+        );
+        that.createNotification(
+          '🚨 GRAPHQL ERROR IN QUERY CHECK LOG FOR DETAILS - Test the query in the Developer tools',
+          {
+            type: 'warning',
+            canDismiss: true,
+            timeout: 4000,
+            showInAppNotification: true,
+          },
+        );
+      }
+    } else {
+      $query = query;
+    }
+
+    const isOnline = true;
+
+    return new Promise((resolve, reject) => {
+      if (that.client !== undefined) {
+        that.client
+          .query({
+            query: $query,
+            variables,
+            fetchPolicy: isOnline === true ? options.fetchPolicy : 'cache-only',
+          })
+          .then(result => {
+            const {errors = []} = result;
+            if (errors.length > 0) {
+              errors.forEach(error => {
+                if (error) {
+                  const {extensions} = error;
+                  if (extensions) {
+                    const {code} = extensions;
+                    if (code === 'INTERNAL_SERVER_ERROR') {
+                      //we know for certain the server had an unhandled error in the resolver chain.
+                      //the client may not cater for these errors, so we can by default warn the user
+                      //that the server reported an error - we should log and report the error
+                      //to the server side error reporting and tracing.
+                      that.log(
+                        '🚨 Server reported an internal error. This is should not occur, all errors need to be gracefully handled, with support info',
+                        {error, variables, options, query, queryDefinition},
+                        'error',
+                      );
+                    }
+                  }
+                }
+              });
+            }
+            resolve(result);
+          })
+          .catch(clientErr => {
+            that.log(
+              `Error occurred while executing the query ${clientErr.message}`,
+              {query, clientErr},
+              'error',
+            );
+            reject(clientErr);
+            // resolve({ data: null, loading: false, errors: [clientErr] });
+          });
+      } else {
+        reject('Client does not exist');
+      }
+    });
+  }
+
+  async afterLogin(user: Reactory.IUser) {
+    //this.setUser(user);
+    this.setAuthToken(user.token as string);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const {client, ws_link, clearCache} = await ReactoryApolloClient();
+    this.client = client;
+    this.clearCache = clearCache;
+    return this.status({emitLogin: true, forceLogout: true});
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  loadComponent(Component: any, props: any, target: any) {
+    // if (!Component) Component = () => <p>No Component Specified</p>;
+    // attachComponent(Component, props, target);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  loadComponentWithFQN(fqn: string, props: any, target: any) {
+    // let Component = this.getComponent(fqn);
+    // this.loadComponent(Component, props, target);
+  }
+
+  renderForm(componentView: any) {
+    return <React.Fragment>{componentView}</React.Fragment>;
+
+    // return (
+    //   <React.Fragment>
+    //     <Provider store={that.reduxStore}>
+    //       <ApolloProvider client={that.client}>
+    //         <MuiThemeProvider theme={that.muiTheme}>
+    //           <Router>
+    //             <ReactoryProvider api={that} history={that.history}>
+    //               {componentView}
+    //             </ReactoryProvider>
+    //           </Router>
+    //         </MuiThemeProvider>
+    //       </ApolloProvider>
+    //     </Provider>
+    //   </React.Fragment>
+    // );
+  }
+
+  /**
+   * The forms function is executed when the application starts up and
+   * can be called from any component that has the reactory property injected
+   * via the component registed..
+   * @param bypassCache - if true it will always bypass the cache and and fetch the latest list from
+   * the server.
+   * @returns - Promise that contains the formSchemas for the user logged in user.
+   */
+  forms(bypassCache: boolean = false) {
+    const that = this;
+    return new Promise(resolve => {
+      const refresh = () => {
+        const FORMS_QUERY = `
+        query ReactoryForms {
+          ReactoryForms {
+            ${FORM_QUERY_SEGMENTS.FORM_CORE_ELEMENTS}
+          }
+        }
+        `;
+
+        const tempSchema = {
+          schema: {
+            type: 'string',
+            title: '',
+          },
+          uiSchema: {
+            'ui:widget': 'HiddenWidget',
+            'ui:options': {
+              showSubmit: false,
+              style: {
+                display: 'none',
+                height: '0px',
+              },
+            },
+          },
+        };
+
+        that
+          .graphqlQuery<{ReactoryForms: Reactory.IReactoryForm[]}>(
+            FORMS_QUERY,
+            {},
+            {fetchPolicy: 'network-only'},
+          )
+          .then(({data, errors = []}) => {
+            const {ReactoryForms} = data;
+            const ReactoryFormComponent =
+              that.getComponent('core.ReactoryForm');
+
+            if (ReactoryForms && ReactoryForms.length > 0) {
+              that.formSchemas = [];
+              ReactoryForms.forEach(
+                ($formDef: Reactory.IReactoryForm, formDefIndex: number) => {
+                  const formDef = {...$formDef, ...tempSchema};
+                  that.formSchemas.push(formDef);
+                  if (formDef.registerAsComponent === true) {
+                    const FormComponent = (props: any, context: any) => {
+                      return that.renderForm(
+                        <ReactoryFormComponent
+                          formId={formDef.id}
+                          key={`${formDefIndex}`}
+                          onSubmit={props.onSubmit}
+                          onChange={props.onChange}
+                          formData={
+                            formDef.defaultFormValue ||
+                            props.formData ||
+                            props.data
+                          }
+                          before={props.before}
+                          {...props}
+                          context={context}>
+                          {props.children}
+                        </ReactoryFormComponent>,
+                      );
+                    };
+                    that.registerComponent(
+                      formDef.nameSpace,
+                      formDef.name,
+                      formDef.version,
+                      FormComponent,
+                      formDef.tags,
+                      formDef.roles,
+                      true,
+                      [],
+                      'form',
+                    );
+                  }
+                },
+              );
+              that.formSchemaLastFetch = moment();
+              resolve(ReactoryForms);
+            }
+
+            if (errors.length > 0) {
+              errors.forEach((err, erridx) => {
+                that.log(
+                  `GraphQL ReactoryForms result error #${erridx}`,
+                  {err},
+                  'error',
+                );
+              });
+            }
+          })
+          .catch(err => {
+            that.log('🚨 Unabled to process query', err, 'error');
+            resolve([]);
+          });
+      };
+
+      if (
+        that.formSchemaLastFetch !== null &&
+        that.formSchemaLastFetch !== undefined &&
+        bypassCache === false
+      ) {
+        if (
+          moment(that.formSchemaLastFetch).add(5, 'minutes').isBefore(moment())
+        ) {
+          refresh();
+        } else {
+          resolve(that.formSchemas);
+        }
+      } else {
+        refresh();
+      }
+    });
+  }
+
+  /**
+   * Returns a form with the specific id.
+   * @param id - string id.
+   * @returns
+   */
+  form(id: string, onFormUpdated?: (formDef: Reactory.IReactoryForm) => void) {
+    const that = this;
+    const {formSchemas = []} = this;
+
+    if (formSchemas.length === 0) {
+      return undefined;
+    }
+
+    let $formDef = lodash.find(formSchemas, {id});
+
+    if ($formDef) {
+      const FORM_QUERY = `
+    query ReactoryFormGetById($id: String!) {
+      ReactoryFormGetById(id: $id) {
+        ${FORM_QUERY_SEGMENTS.FORM_CORE_ELEMENTS}
+        ${FORM_QUERY_SEGMENTS.FORM_SCHEMAS}        
+        ${FORM_QUERY_SEGMENTS.ADDITIONAL}
+      }
+    }`;
+
+      if (!$formDef.__complete__) {
+        that
+          .graphqlQuery<{ReactoryFormGetById?: Reactory.IReactoryForm}>(
+            FORM_QUERY,
+            {id},
+            {fetchPolicy: 'network-only'},
+          )
+          .then(({data}) => {
+            if (data && data.ReactoryFormGetById) {
+              let index = lodash.findIndex(this.formSchemas, {id});
+
+              that.formSchemas[index] = {
+                ...data.ReactoryFormGetById,
+                __complete__: true,
+              };
+
+              if (onFormUpdated) {
+                onFormUpdated(that.formSchemas[index]);
+              }
+
+              that.emit(
+                `onReactoryFormDefinitionUpdate::${id}`,
+                that.formSchemas[index],
+              );
+            }
+          })
+          .catch(err => {
+            that.log(
+              'Could not get the form component data',
+              {err},
+              'error',
+              'ReatoryApi',
+            );
+          });
+      }
+    }
+
+    return $formDef;
+  }
+
+  async raiseFormCommand(commandId: string, commandDef: any, formProps: any) {
+    const that = this;
+
+    if (commandDef.action && commandDef.action === 'component') {
+      // const componentToMount = commandDef.component.componentFqn;
+      // const _formData = formProps.formData || formProps.formContext.formData;
+      // this.showModalWithComponentFqn(
+      //   componentToMount,
+      //   commandDef.title,
+      //   {formData: _formData},
+      //   {open: true},
+      //   null,
+      //   false,
+      //   null,
+      // );
+    }
+
+    if (commandDef.hasOwnProperty('graphql')) {
+      if (commandDef.graphql.hasOwnProperty('mutation')) {
+        let variables = {};
+        if (commandDef.graphql.mutation.variables) {
+          let data = formProps.formData || formProps.formContext.formData;
+          variables = objectMapper.merge(
+            data,
+            commandDef.graphql.mutation.variables,
+          );
+        }
+        if (commandDef.graphql.mutation.staticVariables) {
+          variables = {
+            ...commandDef.graphql.mutation.staticVariables,
+            ...variables,
+          };
+        }
+
+        let mutationText = commandDef.graphql.mutation.text;
+        let mutationResult: any = await this.graphqlMutation(mutationText, {
+          ...variables,
+        }).then();
+
+        if (
+          commandDef.graphql.mutation.onSuccessMethod &&
+          commandDef.graphql.mutation.onSuccessMethod === 'refresh'
+        ) {
+          that.log(
+            `EXECUTING FORM REFRESH:: ${JSON.stringify(mutationResult)}`,
+          );
+          formProps.formContext.refresh();
+        }
+
+        if (
+          commandDef.graphql.mutation.onSuccessMethod &&
+          commandDef.graphql.mutation.onSuccessMethod === 'notification'
+        ) {
+          const resultMap = commandDef.graphql.mutation.resultMap;
+          let notificationProperties = {
+            ...(commandDef.graphql.mutation.notificationProperties || {}),
+            ...objectMapper.merge(mutationResult, resultMap),
+          };
+
+          that.createNotification(
+            notificationProperties.title || 'No Title',
+            notificationProperties.options || {},
+          );
+        }
+
+        return mutationResult;
+      }
+
+      // TODO IMPLEMENT QUERY
+    }
+
+    if (commandId.indexOf('workflow') === 0) {
+      return await this.startWorkFlow(commandId, formProps);
+    } else {
+      this.amq.raiseFormCommand(commandId, formProps);
+    }
+  }
+
+  startWorkFlow(workFlowId: string, data: any) {
+    //this.amp.raiseWorkFlowEvent(workFlowId, data);
+    const that = this;
+    return new Promise((resolve, reject) => {
+      if (that.client) {
+        that.client
+          .query({
+            query: that.mutations.System.startWorkflow,
+            variables: {name: workFlowId, data},
+            fetchPolicy: 'network-only',
+          })
+          .then(result => {
+            if (result.data.startWorkflow === true) {
+              resolve(true);
+            } else {
+              resolve(false);
+            }
+          })
+          .catch(clientErr => {
+            console.error('Error starting workflow', clientErr);
+            resolve(anonUser);
+          });
+      } else {
+        reject('Client is null');
+      }
+    });
+  }
+
+  onFormCommandEvent(commandId: string, func: Function) {
+    this.amq.onFormCommandEvent(commandId, func);
+  }
+
+  /**
+   * Checks if there is an overlap between the item roles and the user roles.
+   * @param itemRoles - A string[] that represents the allowed roles for the item we want to check.
+   * @param userRoles - The user roles as a string[] that we are checking against.  When no roles are provided the logged in account roles are used.
+   * @param organization - Provide a organization if the membership should be checked for a specific organization
+   * @param business_unit - Provide a businessUnit item if the membership should be check for access to a specific business unit
+   * @param user_memberships - Provide a memberships[] array to check
+   * @returns
+   */
+  hasRole(
+    itemRoles: string[] = [],
+    userRoles: string[] | null = null,
+    organization?: Reactory.IOrganization,
+    business_unit?: Reactory.IBusinessUnit,
+    user_memberships?: Reactory.IMembership[],
+  ) {
+    let comparedRoles = userRoles || [];
+
+    if (itemRoles.length === 1 && itemRoles[0] === '*') {
+      return true;
+    }
+
+    if (userRoles === null) {
+      const loggedInUser = this.getUser();
+
+      if (organization === null || organization === undefined) {
+        comparedRoles = loggedInUser.roles;
+      } else {
+        //if there is a organization_id, we check if there is a membership that has the organization id
+        let $memberships = user_memberships || loggedInUser.memberships;
+        if ($memberships && $memberships.length > 0) {
+          const matched_memberships: Reactory.IMembership[] = lodash.filter(
+            $memberships,
+            (membership: Reactory.IMembership) => {
+              if (!membership.organization) {
+                return false;
+              }
+
+              if (membership.organization.id === organization.id) {
+                //if the business unit parameter is null, we only care about the organization role.
+                //but if the membership we are checking against does have a business unit, we should
+                //not use it as a comparable, so we only return true if the membership businessUnit is null.
+                if (
+                  (business_unit === null || business_unit === undefined) &&
+                  membership.businessUnit === null
+                ) {
+                  return true;
+                }
+
+                //we comapre the business units if there is one of either element
+                if (
+                  business_unit &&
+                  business_unit.id &&
+                  membership.businessUnit
+                ) {
+                  return business_unit.id === membership.businessUnit.id;
+                }
+                //not enough information for us to determine there is a match,
+                //so return false.
+                return false;
+              }
+            },
+          );
+
+          if (matched_memberships.length > 0) {
+            comparedRoles = [];
+            matched_memberships.forEach((membership: Reactory.IMembership) => {
+              if (membership.roles) {
+                comparedRoles.push(...membership.roles);
+              }
+            });
+            //create a unique list of the roles.
+            comparedRoles = lodash.uniq(comparedRoles);
+          }
+        }
+      }
+    }
+
+    const result = intersection(itemRoles, comparedRoles);
+    return result.length >= 1;
+  }
+
+  isAnon() {
+    return this.hasRole(['ANON'], this.$user.roles) === true;
+  }
+
+  getMenus() {
+    const user = this.getUser();
+    const {menus} = user;
+    return menus || [];
+  }
+
+  async getTheme() {
+    const user = this.getUser();
+    const {themeOptions} = user;
+    //add theme extension
+    const extensions = {
+      reactory: {
+        icons,
+      },
+    };
+
+    let paletteType: string | null = 'light';
+    let isDarkMode: boolean = false;
+
+    // const isDarkMode = window.matchMedia(
+    //   '(prefers-color-scheme: dark)',
+    // ).matches;
+    // const isLightMode = window.matchMedia(
+    //   '(prefers-color-scheme: light)',
+    // ).matches;
+    // const isNotSpecified = window.matchMedia(
+    //   '(prefers-color-scheme: no-preference)',
+    // ).matches;
+
+    if (LocalStorage) {
+      paletteType = await LocalStorage.getItem('$reactory$theme_mode');
+      if (!paletteType) {
+        //@ts-ignore
+        paletteType = isDarkMode === true ? 'dark' : 'light';
+      }
+    }
+
+    if (paletteType === null) {
+      paletteType = 'light';
+    }
+
+    let $theme = lodash.cloneDeep(themeOptions);
+    $theme.extensions = extensions;
+
+    if ($theme.palette) {
+      $theme.palette.type = paletteType;
+    } else {
+      $theme.palette = {
+        type: paletteType,
+      };
+    }
+
+    return $theme;
+  }
+
+  getRoutes() {
+    const user = this.getUser();
+    const {routes} = user;
+    return routes || [];
+  }
+
+  getApplicationRoles() {
+    const user = this.getUser();
+    const {roles} = user;
+    return roles || [];
+  }
+
+  setUser(user: Reactory.IUser) {
+    this.$user = user;
+    LocalStorage.setItem(storageKeys.LoggedInUser, JSON.stringify(user));
+  }
+
+  setAuthToken(token: string) {
+    LocalStorage.setItem(storageKeys.AuthToken, token);
+  }
+
+  getAuthToken() {
+    return LocalStorage.getItem(storageKeys.AuthToken);
+  }
+
+  setLastUserEmail(email: string) {
+    LocalStorage.setItem(storageKeys.LastLoggedInEmail, email);
+  }
+
+  getLastUserEmail() {
+    LocalStorage.getItem(storageKeys.LastLoggedInEmail);
+  }
+
+  registerComponent(
+    nameSpace: string,
+    name: string,
+    version = '1.0.0',
+    component: any = EmptyComponent,
+    tags: string[] = [],
+    roles: string[] = ['*'],
+    wrapWithApi = false,
+    connectors: any[] = [],
+    componentType = 'component',
+  ) {
+    if (isEmpty(nameSpace)) {
+      throw new Error('nameSpace is required for component registration');
+    }
+    if (isEmpty(name)) {
+      throw new Error('name is required for component registration');
+    }
+    if (isNil(component)) {
+      throw new Error('component is required to register component');
+    }
+
+    const fqn = `${nameSpace}.${name}@${version}`;
+    this.componentRegister[fqn] = {
+      nameSpace,
+      name,
+      version,
+      component: wrapWithApi === false ? component : withApi(component),
+      tags,
+      roles,
+      connectors,
+      componentType,
+    };
+    this.emit('componentRegistered', fqn);
+  }
+
+  getComponentsByType(componentType: string = 'component') {
+    let _components: any[] = [];
+    Object.keys(this.componentRegister).forEach(fqn => {
+      if (this.componentRegister[fqn].componentType === componentType) {
+        _components.push(this.componentRegister[fqn]);
+      }
+    });
+
+    return _components;
+  }
+
+  getComponents(componentFqns: any[] = []): any {
+    let componentMap: any = {};
+    componentFqns.forEach(fqn => {
+      let component: any = null;
+      if (typeof fqn === 'string') {
+        component =
+          this.componentRegister[
+            `${fqn}${fqn.indexOf('@') > 0 ? '' : '@1.0.0'}`
+          ];
+        try {
+          if (component) {
+            const canUserCreateComponent =
+              isArray(component.roles) === true
+                ? this.hasRole(component.roles)
+                : true;
+            componentMap[component.name] =
+              canUserCreateComponent === true
+                ? component.component
+                : this.getNotAllowedComponent(component.name);
+          } else {
+            componentMap[componentPartsFromFqn(fqn).name] =
+              this.getNotFoundComponent();
+          }
+        } catch (e) {
+          this.log('Error Occured Loading Component Fqns', [fqn], 'error');
+        }
+      }
+      if (typeof fqn === 'object') {
+        if (typeof fqn.componentFqn === 'string') {
+          component =
+            this.componentRegister[
+              `${fqn.componentFqn}${
+                fqn.componentFqn.indexOf('@') > 0 ? '' : '@1.0.0'
+              }`
+            ];
+          try {
+            if (component) {
+              const canUserCreateComponent =
+                isArray(component.roles) === true
+                  ? this.hasRole(component.roles)
+                  : true;
+              componentMap[
+                typeof fqn.alias === 'string' ? fqn.alias : component.name
+              ] =
+                canUserCreateComponent === true
+                  ? component.component
+                  : this.getNotAllowedComponent(component.name);
+            } else {
+              componentMap[componentPartsFromFqn(fqn.componentFqn).name] =
+                this.getNotFoundComponent();
+            }
+          } catch (e) {
+            this.log(
+              'Error Occured Loading Component Fqns',
+              fqn.componentFqn,
+              'error',
+            );
+          }
+        }
+      }
+    });
+    return componentMap;
+  }
+
+  getComponent(fqn: string) {
+    if (fqn === undefined) {
+      throw new Error('NO NULL FQN');
+    }
+    try {
+      const found =
+        this.componentRegister[`${fqn}${fqn.indexOf('@') > 0 ? '' : '@1.0.0'}`];
+      if (found && found.component) {
+        return found.component;
+      }
+      return null; //we must return null, because the component is not found, we cannot automatically return the not found component, that is the responsibility of the component
+    } catch (err: any) {
+      this.log(`Bad component name ${err.message}`, fqn, 'error');
+      if (
+        this.componentRegister &&
+        this.componentRegister['core.NotFound@1.0.0']
+      ) {
+        return this.getNotFoundComponent();
+      }
+    }
+  }
+
+  getGlobalComponents() {
+    const components: any[] = [];
+    const that = this;
+    const {componentRegister} = this;
+    const GLOBAL_REGEX_PATTERN = /.\$GLOBAL\$/;
+    Object.keys(componentRegister).forEach(componentKey => {
+      if (GLOBAL_REGEX_PATTERN.test(componentKey) === true) {
+        const {roles, component} = componentRegister[componentKey];
+        if (isArray(roles) === true) {
+          //@ts-ignore
+          if (that.hasRole(roles) === true) {
+            components.push(component);
+          }
+        } else {
+          components.push(component);
+        }
+      }
+    });
+
+    return components;
+  }
+
+  getNotFoundComponent(notFoundComponent = 'core.NotFound@1.0.0') {
+    if (this.componentRegister && this.componentRegister[notFoundComponent]) {
+      return this.componentRegister[notFoundComponent].component;
+    } else {
+      return React.forwardRef(() => (
+        <Text>
+          Component Find Failure, please check component registry and component
+          name requested
+        </Text>
+      ));
+    }
+  }
+
+  getNotAllowedComponent(notAllowedComponentFqn = 'core.NotAllowed@1.0.0') {
+    if (
+      this.componentRegister &&
+      this.componentRegister[notAllowedComponentFqn]
+    ) {
+      return this.componentRegister[notAllowedComponentFqn].component;
+    } else {
+      return React.forwardRef(() => <Text>Access Denied</Text>);
+    }
+  }
+
+  // mountComponent(ComponentToMount, props, domNode, theme = true, callback) {
+  //   const that = this;
+  //   if (theme === true) {
+  //     ReactDOM.render(
+  //       <React.Fragment>
+  //         <CssBaseline />
+  //         <Provider store={that.reduxStore}>
+  //           <ApolloProvider client={that.client}>
+  //             <MuiThemeProvider theme={that.muiTheme}>
+  //               <Router>
+  //                 <ReactoryProvider api={that} history={this.history}>
+  //                   <ComponentToMount {...props} />
+  //                 </ReactoryProvider>
+  //               </Router>
+  //             </MuiThemeProvider>
+  //           </ApolloProvider>
+  //         </Provider>
+  //       </React.Fragment>,
+  //       domNode,
+  //       callback,
+  //     );
+  //   } else {
+  //     ReactDOM.render(<ComponentToMount {...props} />, domNode, callback);
+  //   }
+  // }
+
+  // showModalWithComponentFqn(
+  //   componentFqn,
+  //   title = '',
+  //   props = {},
+  //   modalProps = {},
+  //   domNode = null,
+  //   theme = true,
+  //   callback,
+  // ) {
+  //   const ComponentToMount = this.getComponent(componentFqn);
+  //   return this.showModalWithComponent(
+  //     title,
+  //     ComponentToMount,
+  //     props,
+  //     modalProps,
+  //     domNode,
+  //     theme,
+  //     callback,
+  //   );
+  // }
+
+  // showModalWithComponent(
+  //   title = '',
+  //   ComponentToMount,
+  //   props,
+  //   modalProps: any = {},
+  //   domNode = null,
+  //   theme = true,
+  //   callback,
+  // ) {
+  //   const that = this;
+  //   const FullScreenModal = that.getComponent('core.FullScreenModal');
+  //   const _modalProps: any = {...modalProps};
+  //   if (modalProps.open === null || modalProps.open === undefined)
+  //     _modalProps.open = true;
+  //   else _modalProps.open = modalProps.open === true;
+  //   _modalProps.title = title;
+  //   let _domNode = domNode || reactoryDomNode();
+  //   if (isNil(_modalProps.onClose) === true) {
+  //     _modalProps.onClose = () => {
+  //       _modalProps.open = false;
+  //       setTimeout(() => {
+  //         that.unmountComponent(_domNode);
+  //       }, 2000);
+  //     };
+  //   }
+  //   const ModalMounted = () => (
+  //     <FullScreenModal {..._modalProps}>
+  //       {' '}
+  //       <ComponentToMount {...props} />{' '}
+  //     </FullScreenModal>
+  //   );
+  //   this.mountComponent(ModalMounted, {}, _domNode, true, callback);
+  //   return _domNode;
+  // }
+
+  // createElement(ComponentToCreate: any, props: any) {
+  //   //return React.createElement(ComponentToCreate, props);
+  // }
+
+  // unmountComponent() {
+  //   //return ReactDOM.unmountComponentAtNode(node);
+  // }
+
+  async logout(refreshStatus = true) {
+    const user = this.getUser();
+    LocalStorage.removeItem(storageKeys.AuthToken);
+    this.clearStoreAndCache();
+
+    const {client} = await ReactoryApolloClient();
+    this.client = client;
+    this.setUser({...user, ...anonUser});
+
+    if (refreshStatus === true) {
+      this.status({emitLogin: false, forceLogout: true}).then(() => {
+        this.emit(ReactoryApiEventNames.onLogout);
+      });
+    } else {
+      this.emit(ReactoryApiEventNames.onLogout);
+    }
+  }
+
+  getLastValidation() {
+    return this.lastValidation;
+  }
+
+  getTokenValidated() {
+    return this.tokenValidated;
+  }
+
+  getUser() {
+    if (!this.$user) {
+      this.$user = ReactoryLoggedInUser();
+    }
+    return this.$user;
+  }
+
+  saveUserLoginCredentials(provider: string, props: any) {
+    //username, password, loginResult
+    return this.graphqlMutation(
+      `mutation AddUserCredentials($provider: String!, $props: Any) {
+          addUserCredentials(provider: $provider, props: $props)
+        }`,
+      {
+        provider,
+        props,
+      },
+    );
+  }
+
+  getUserLoginCredentials(provider: string) {
+    return this.graphqlQuery(
+      `query GetUserCredentials($provider: String!) {
+          getUserCredentials(provider: $provider) {
+            provider
+            props
+            lastLogin
+          }
+        }
+      `,
+      {provider},
+      {fetchPolicy: 'network-only'},
+    );
+  }
+
+  async storeObjectWithKey(key: string, objectToStore: any) {
+    await LocalStorage.setItem(key, JSON.stringify(objectToStore)).then();
+  }
+
+  async readObjectWithKey(key: string) {
+    return JSON.parse(await LocalStorage.getItem(key).then());
+  }
+
+  async deleteObjectWithKey(key: string) {
+    await LocalStorage.removeItem(key).then();
+    return;
+  }
+
+  status(
+    options: {emitLogin: boolean; forceLogout?: boolean} = {
+      emitLogin: false,
+      forceLogout: false,
+    },
+  ) {
+    const that = this;
+    const current_user = this.$user;
+
+    return new Promise(resolve => {
+      that.forms(true).then(() => {
+        const getStatus = () => {
+          if (that.client) {
+            that.client
+              .query({
+                query: that.queries.System.apiStatus,
+                fetchPolicy: 'network-only',
+              })
+              .then(result => {
+                if (result.data.apiStatus.status === 'API OK') {
+                  that.setUser({...result.data.apiStatus});
+                  that.lastValidation = moment().valueOf();
+                  that.tokenValidated = true;
+
+                  if (options.emitLogin === true) {
+                    that.emit(ReactoryApiEventNames.onLogin, that.getUser());
+                  }
+                  if (
+                    result.data.apiStatus.messages &&
+                    isArray(result.data.apiStatus.messages)
+                  ) {
+                    result.data.apiStatus.messages.forEach((message: any) => {
+                      that.createNotification(message.title, message);
+                    });
+                  }
+
+                  that.emit(ReactoryApiEventNames.onApiStatusUpdate, {
+                    ...result,
+                    offline: false,
+                  });
+                  resolve(that.getUser());
+                } else {
+                  if (options.forceLogout !== false) {
+                    that.logout(false);
+                    //@ts-ignore
+                    that.setUser(anonUser);
+                    resolve(anonUser);
+                  } else {
+                    resolve(current_user);
+                  }
+
+                  that.emit(ReactoryApiEventNames.onApiStatusUpdate, {
+                    ...result,
+                    status: 'API OFFLINE',
+                    offline: true,
+                  });
+                }
+              })
+              .catch(clientErr => {
+                if (options.forceLogout !== false) {
+                  that.logout(false);
+                  resolve({
+                    ...anonUser,
+                    status: 'API OFFLINE',
+                    offline: true,
+                    offlineError: true,
+                  });
+                } else {
+                  resolve(current_user);
+                }
+
+                that.emit(ReactoryApiEventNames.onApiStatusUpdate, {
+                  status: 'API OFFLINE',
+                  offline: true,
+                  clientError: clientErr,
+                });
+              });
+          } else {
+            setTimeout(() => {
+              getStatus();
+            }, 1000);
+          }
+        };
+        getStatus();
+      });
+    });
+  }
+
+  validateToken(token: string) {
+    this.setAuthToken(token);
+    return this.status();
+  }
+
+  async resetPassword(password: string, confirmPassword: string) {
+    const that = this;
+    return new Promise((resolve, reject) => {
+      const setPasswordMutation = that.mutations.Users.setPassword;
+      LocalStorage.getItem('auth_token').then((authToken: string | null) => {
+        if (authToken && that.client) {
+          return that.client
+            .mutate({
+              mutation: setPasswordMutation,
+              variables: {
+                input: {
+                  password,
+                  confirmPassword,
+                  authToken,
+                },
+              },
+            })
+            .then(result => {
+              if (result.data) {
+                resolve(result.data);
+              } else {
+                reject(new Error('No Data'));
+              }
+            })
+            .catch(passwordUpdateError => {
+              console.error(passwordUpdateError);
+              reject(passwordUpdateError);
+            });
+        }
+      });
+    });
+  }
+
+  async setViewContext(context = {}) {
+    const newContext = {...this.getViewContext(), ...context};
+    await LocalStorage.setItem(
+      storageKeys.viewContext,
+      JSON.stringify(newContext),
+    ).then();
+  }
+
+  async getViewContext() {
+    return JSON.parse(
+      (await LocalStorage.getItem(storageKeys.viewContext).then()) || '{}',
+    );
+  }
+
+  static propTypes = {
+    client: PropTypes.instanceOf(ApolloClient).isRequired,
+  };
+}
+
+/*
+export const login = ReactoryApi.login
+export const companyWithId = ReactoryApi.companyWithId
+export const register = ReactoryApi.register
+export const forgot = ReactoryApi.forgot
+export const reset = ReactoryApi.reset
+export const forms = ReactoryApi.forms
+*/
+
+export default ReactoryApi;
