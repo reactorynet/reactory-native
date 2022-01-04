@@ -13,33 +13,31 @@ import ReactoryApi from './reactory/api';
 
 
 const App = () => {
-    
-  //const [v, setV] = React.useState(0);  
 
-  const client = new ApolloClient({
-    uri: `${REACT_APP_API_ENDPOINT || 'https://60e7-160-19-235-94.ngrok.io'}`,
-    cache: new InMemoryCache(),
-  });
+  const [reactory, setReactory] = React.useState<ReactoryApi>();
 
-  const reactory = new ReactoryApi({
-    client,
-  });
+  const reactoryInit = async () => {
+    let $reactory = new ReactoryApi({});
+    $reactory = await $reactory.init();
+    return $reactory;
+  }
 
   React.useEffect(() => {
-
-    reactory.init();
-
+    reactoryInit().then(($reactory) => {
+      $reactory.log(`Reactory Native Initializaed`, { REACT_APP_API_ENDPOINT })
+      setReactory($reactory);
+    })
     return () => {
       //shutdown
     };
-  });
+  }, []);
 
-  if (reactory.client === null) {
-    return (<Text>LOADING</Text>);
+  if (reactory === null || reactory === undefined) {
+    return (<Text>Waiting for client</Text>);
   }
 
   return (
-    <ApolloProvider client={client}>
+    <ApolloProvider client={reactory.client}>
       <MaterialProvider theme={DefaultTheme}>
         <ReactoryProvider reactory={reactory}>
           <Root />

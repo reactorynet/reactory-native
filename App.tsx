@@ -57,12 +57,13 @@ const Section: React.FC<{
   );
 };
 
-const App = (props: {reactory: Reactory.Client.IReactoryApi}) => {
+const App = () => {
   const isDarkMode = useColorScheme() === 'dark';
   const reactory = useReactory();
   const [status, setApiStatus] = React.useState<any>(null);
-
+  
   const getApiStatus = async () => {
+    reactory.log(`Calling API status`)
     const userStatus = await reactory.status({emitLogin: true}).then();
     setApiStatus(userStatus);
     reactory.log('Fetched user status from API', {userStatus}, 'debug');
@@ -81,11 +82,13 @@ const App = (props: {reactory: Reactory.Client.IReactoryApi}) => {
     return onFinalize;
   };
 
+  React.useEffect(onInit, []);
+
   if (status === null){
-    return (<View><Text>Loading Application</Text></View>)
+    return (<View><Text>Loading Application!</Text></View>)
   }
 
-  React.useEffect(onInit, []);
+  
 
   return (
     <SafeAreaView style={backgroundStyle}>

@@ -5,6 +5,8 @@ import {
   NormalizedCacheObject,
 } from '@apollo/client';
 
+import { REACT_APP_API_ENDPOINT, REACT_APP_CLIENT_KEY, REACT_APP_CLIENT_PASSWORD, REACT_APP_TITLE } from 'react-native-dotenv';
+
 import {WebSocketLink} from '@apollo/link-ws';
 import {setContext} from '@apollo/link-context';
 import {getMainDefinition} from '@apollo/client/utilities';
@@ -16,13 +18,6 @@ import LocalStorage from '@react-native-community/async-storage';
 const packageInfo: any = require('../../package.json');
 const anonToken: string =
   'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJpZC5yZWFjdG9yeS5uZXQiLCJpYXQiOjE1MTY1OTM3MjAsImV4cCI6MTU3MTcxODYxMCwiYXVkIjoiYXBwLnJlYWN0b3J5Lm5ldCIsInN1YiI6InJlYWN0b3J5LWF1dGgiLCJuYW1lIjoiR3Vlc3QiLCJsYXN0bmFtZSI6IlVzZXIiLCJ1c2VySWQiOiItMSJ9.aFYx4p09_KWtKLlOl05YbNiEBzcX3kFD9mvykmA7oGL92mTKdt-VVUFrIaEXfYcszBIaIjHWN_sC66mq7kggVw';
-
-const {
-  REACT_APP_CLIENT_KEY = 'reactory',
-  REACT_APP_CLIENT_PASSWORD = '',
-  REACT_APP_API_ENDPOINT = 'https://api.reactory.net/api',
-  REACT_APP_APP_TITLE = 'Reactory',
-} = process.env;
 
 if (LocalStorage) {
   LocalStorage.setItem('REACT_APP_CLIENT_KEY', REACT_APP_CLIENT_KEY);
@@ -57,17 +52,21 @@ export default async () => {
     let deviceOS = 'android';
     let os_version = '21';
 
-    return {
+    const $headers = {
       headers: {
         ...headers,
         authorization: token ? `Bearer ${token}` : '',
         'x-client-key': `${process.env.REACT_APP_CLIENT_KEY}`,
         'x-client-pwd': `${process.env.REACT_APP_CLIENT_PASSWORD}`,
         'x-client-version': `${packageInfo.version}`,
-        'x-client-name': REACT_APP_APP_TITLE,
+        'x-client-name': REACT_APP_TITLE,
         userAgent: `ReactoryNative ${deviceId} ${deviceOS} ${os_version}`,
       },
     };
+
+    console.log(`Apollo Client Start`, $headers);
+
+    return $headers;
   });
 
   const uploadLink = createUploadLink({
