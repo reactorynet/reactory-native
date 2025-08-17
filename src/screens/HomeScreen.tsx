@@ -1,106 +1,163 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React from 'react';
-import {
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  useColorScheme,
-} from 'react-native';
+import React, { useState } from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  Text,
+  Card,
+  Button,
+  FAB,
+  Chip,
+  useTheme,
+  Snackbar,
+  IconButton,
+  Surface,
+} from 'react-native-paper';
 import { useAppDispatch, useAppSelector } from '../store';
 import { increment, decrement, reset } from '../store/slices/counterSlice';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
+// Icon components defined outside of render
+const CounterIcon = (props: any) => <IconButton {...props} icon="counter" />;
+const StarIcon = (props: any) => <IconButton {...props} icon="star" />;
+const NavigationIcon = (props: any) => <IconButton {...props} icon="navigation" />;
+
 const HomeScreen: React.FC<Props> = ({ navigation }) => {
-  const isDarkMode = useColorScheme() === 'dark';
+  const theme = useTheme();
   const dispatch = useAppDispatch();
   const count = useAppSelector((state) => state.counter.value);
+  const [snackbarVisible, setSnackbarVisible] = useState(false);
 
-  const backgroundStyle = {
-    backgroundColor: isDarkMode ? '#1a1a1a' : '#ffffff',
-    flex: 1,
-  };
-
-  const textStyle = {
-    color: isDarkMode ? '#ffffff' : '#000000',
+  const handleIncrement = () => {
+    dispatch(increment());
+    setSnackbarVisible(true);
   };
 
   return (
-    <SafeAreaView style={backgroundStyle}>
-      <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={backgroundStyle.backgroundColor}
-      />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        style={backgroundStyle}>
-        <View style={styles.container}>
-          <Text style={[styles.title, textStyle]}>
-            Welcome to Reactory Native!
-          </Text>
-          
-          <View style={styles.counterSection}>
-            <Text style={[styles.counterTitle, textStyle]}>
-              Redux Counter Example
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Welcome Card */}
+        <Card style={styles.welcomeCard}>
+          <Card.Content>
+            <Text variant="headlineMedium" style={styles.title}>
+              Welcome to Reactory Native! 🚀
             </Text>
-            <Text style={[styles.counterValue, textStyle]}>
-              Count: {count}
+            <Text variant="bodyMedium" style={styles.subtitle}>
+              Modern React Native with Material Design
             </Text>
-            
-            <View style={styles.buttonContainer}>
-              <TouchableOpacity
-                style={[styles.button, styles.incrementButton]}
-                onPress={() => dispatch(increment())}>
-                <Text style={styles.buttonText}>+</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[styles.button, styles.decrementButton]}
-                onPress={() => dispatch(decrement())}>
-                <Text style={styles.buttonText}>-</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[styles.button, styles.resetButton]}
-                onPress={() => dispatch(reset())}>
-                <Text style={styles.buttonText}>Reset</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          </Card.Content>
+        </Card>
 
-          <TouchableOpacity
-            style={[styles.button, styles.navigationButton]}
-            onPress={() => navigation.navigate('Details', { title: 'Hello from Home!' })}>
-            <Text style={styles.buttonText}>Go to Details</Text>
-          </TouchableOpacity>
-          
-          <View style={styles.infoSection}>
-            <Text style={[styles.sectionTitle, textStyle]}>
-              🚀 Modern React Native Features
-            </Text>
-            <Text style={[styles.feature, textStyle]}>
-              ✅ TypeScript support
-            </Text>
-            <Text style={[styles.feature, textStyle]}>
-              ✅ Redux Toolkit for state management
-            </Text>
-            <Text style={[styles.feature, textStyle]}>
-              ✅ React Navigation for routing
-            </Text>
-            <Text style={[styles.feature, textStyle]}>
-              ✅ ESLint & Prettier configured
-            </Text>
-            <Text style={[styles.feature, textStyle]}>
-              ✅ Jest testing setup
-            </Text>
-          </View>
-        </View>
+        {/* Counter Card */}
+        <Card style={styles.card}>
+          <Card.Title
+            title="Redux Counter Demo"
+            subtitle="State management with Redux Toolkit"
+            left={CounterIcon}
+          />
+          <Card.Content>
+            <Surface style={styles.counterDisplay}>
+              <Text variant="displaySmall" style={styles.counterText}>
+                {count}
+              </Text>
+            </Surface>
+            
+            <View style={styles.buttonRow}>
+              <Button
+                mode="contained"
+                onPress={handleIncrement}
+                style={styles.button}
+                icon="plus">
+                Increment
+              </Button>
+              
+              <Button
+                mode="outlined"
+                onPress={() => dispatch(decrement())}
+                style={styles.button}
+                icon="minus">
+                Decrement
+              </Button>
+              
+              <Button
+                mode="text"
+                onPress={() => dispatch(reset())}
+                style={styles.button}
+                icon="refresh">
+                Reset
+              </Button>
+            </View>
+          </Card.Content>
+        </Card>
+
+        {/* Features Card */}
+        <Card style={styles.card}>
+          <Card.Title
+            title="Integrated Technologies"
+            subtitle="Modern React Native stack"
+            left={StarIcon}
+          />
+          <Card.Content>
+            <View style={styles.chipContainer}>
+              <Chip icon="language-typescript" style={styles.chip}>TypeScript</Chip>
+              <Chip icon="redux" style={styles.chip}>Redux Toolkit</Chip>
+              <Chip icon="navigation" style={styles.chip}>React Navigation</Chip>
+              <Chip icon="graphql" style={styles.chip}>Apollo GraphQL</Chip>
+              <Chip icon="material-design" style={styles.chip}>Material Design</Chip>
+            </View>
+          </Card.Content>
+        </Card>
+
+        {/* Navigation Card */}
+        <Card style={styles.card}>
+          <Card.Title
+            title="Navigation Demo"
+            subtitle="Type-safe navigation"
+            left={NavigationIcon}
+          />
+          <Card.Content>
+            <View style={styles.buttonContainer}>
+              <Button
+                mode="contained"
+                onPress={() => navigation.navigate('Details', { title: 'Hello from Home!' })}
+                style={styles.navButton}
+                icon="arrow-right">
+                Details Screen
+              </Button>
+              
+              <Button
+                mode="outlined"
+                onPress={() => navigation.navigate('GraphQLDemo')}
+                style={styles.navButton}
+                icon="graphql">
+                GraphQL Demo
+              </Button>
+            </View>
+          </Card.Content>
+        </Card>
       </ScrollView>
+
+      {/* Floating Action Button */}
+      <FAB
+        style={styles.fab}
+        icon="plus"
+        onPress={handleIncrement}
+        label="Add"
+      />
+
+      {/* Snackbar */}
+      <Snackbar
+        visible={snackbarVisible}
+        onDismiss={() => setSnackbarVisible(false)}
+        duration={2000}
+        action={{
+          label: 'Undo',
+          onPress: () => dispatch(decrement()),
+        }}>
+        Counter incremented! Current value: {count}
+      </Snackbar>
     </SafeAreaView>
   );
 };
@@ -108,75 +165,67 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 24,
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 100, // Space for FAB
+  },
+  welcomeCard: {
+    marginBottom: 16,
+  },
+  card: {
+    marginBottom: 16,
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 32,
+    marginBottom: 8,
   },
-  counterSection: {
-    alignItems: 'center',
-    marginBottom: 32,
+  subtitle: {
+    textAlign: 'center',
+    opacity: 0.7,
+  },
+  counterDisplay: {
     padding: 20,
     borderRadius: 12,
-    backgroundColor: '#f5f5f5',
-  },
-  counterTitle: {
-    fontSize: 20,
-    fontWeight: '600',
+    alignItems: 'center',
     marginBottom: 16,
-    color: '#333',
   },
-  counterValue: {
-    fontSize: 24,
+  counterText: {
     fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#333',
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  button: {
+    flex: 1,
+    minWidth: 100,
+  },
+  fullButton: {
+    marginTop: 8,
   },
   buttonContainer: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
+    flexWrap: 'wrap',
   },
-  button: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 60,
-  },
-  incrementButton: {
-    backgroundColor: '#4CAF50',
-  },
-  decrementButton: {
-    backgroundColor: '#f44336',
-  },
-  resetButton: {
-    backgroundColor: '#2196F3',
-  },
-  navigationButton: {
-    backgroundColor: '#6200ee',
-    marginBottom: 32,
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  infoSection: {
-    marginTop: 20,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 16,
-  },
-  feature: {
-    fontSize: 16,
+  navButton: {
+    flex: 1,
     marginBottom: 8,
-    paddingLeft: 8,
+  },
+  chipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  chip: {
+    marginBottom: 4,
+  },
+  fab: {
+    position: 'absolute',
+    right: 16,
+    bottom: 16,
   },
 });
 
