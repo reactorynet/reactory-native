@@ -14,6 +14,9 @@ import { ComponentType as ReactComponentType } from 'react';
 import { DocumentNode } from 'graphql';
 import { ApolloClient, NormalizedCacheObject, ApolloQueryResult, FetchResult } from '@apollo/client';
 
+// Re-export React types for easier access
+export type { ReactComponentType };
+
 // ============================================================================
 // React Native Compatibility Types
 // ============================================================================
@@ -81,6 +84,27 @@ export interface ReactoryTheme {
 // ============================================================================
 // Core Reactory Types (from PWA implementation)
 // ============================================================================
+
+/**
+ * Reactory FQN (Fully Qualified Name) Format
+ * 
+ * Components in Reactory are identified using a Fully Qualified Name (FQN) format:
+ * 
+ * Format: nameSpace.name@version
+ * 
+ * Examples:
+ * - "core.Button@1.0.0" - Button component in core namespace, version 1.0.0
+ * - "ui.forms.TextInput@2.1.0" - TextInput component in ui.forms namespace, version 2.1.0
+ * - "myapp.dashboard.Widget@1.5.2" - Custom Widget component
+ * 
+ * The FQN serves as the unique identifier for component registration, retrieval,
+ * and management operations throughout the Reactory ecosystem.
+ * 
+ * Components:
+ * - nameSpace: Organizational namespace (can include dots for hierarchy)
+ * - name: Specific component name
+ * - version: Semantic version string
+ */
 
 /**
  * Component definition for FQN resolution
@@ -401,9 +425,7 @@ export interface IReactorySDK {
   
   // Component management
   registerComponent: (
-    nameSpace: string,
-    name: string,
-    version: string,
+    fqn: string,
     component: any,
     options?: {
       tags?: string[];
@@ -750,7 +772,7 @@ export interface AuthResult {
  */
 export interface ComponentOptions {
   /** Component namespace for organization */
-  namespace?: string;
+  nameSpace?: string;
   
   /** Component version */
   version?: string;
@@ -775,8 +797,12 @@ export interface ComponentOptions {
  * Registered component information
  */
 export interface RegisteredComponent {
+  /** Component namespace */
+  nameSpace: string;
   /** Component name/identifier */
   name: string;
+  /** Component version */
+  version: string;
   
   /** React component */
   component: ReactComponentType;
@@ -795,26 +821,26 @@ export interface RegisteredComponent {
  * Component registry interface
  */
 export interface ComponentRegistry {
-  /** Register a component */
-  register(name: string, component: ReactComponentType, options?: ComponentOptions): void;
+  /** Register a component using FQN (nameSpace.name@version) */
+  register(fqn: string, component: ReactComponentType, options?: ComponentOptions): void;
   
-  /** Get a registered component */
-  get(name: string): ReactComponentType | null;
+  /** Get a registered component by FQN */
+  get(fqn: string): ReactComponentType | null;
   
   /** Get multiple components */
   getAll(): Map<string, RegisteredComponent>;
   
-  /** Check if component exists */
-  has(name: string): boolean;
+  /** Check if component exists by FQN */
+  has(fqn: string): boolean;
   
-  /** Remove a component */
-  unregister(name: string): boolean;
+  /** Remove a component by FQN */
+  unregister(fqn: string): boolean;
   
   /** Clear all components */
   clear(): void;
   
   /** Get components by namespace */
-  getByNamespace(namespace: string): RegisteredComponent[];
+  getByNamespace(nameSpace: string): RegisteredComponent[];
   
   /** Get components by tag */
   getByTag(tag: string): RegisteredComponent[];
@@ -2065,9 +2091,7 @@ export abstract class ReactorySDK implements IReactorySDK, ReactoryEventEmitter 
   
   // Component management
   abstract registerComponent(
-    nameSpace: string,
-    name: string,
-    version: string,
+    fqn: string,
     component: any,
     options?: {
       tags?: string[];

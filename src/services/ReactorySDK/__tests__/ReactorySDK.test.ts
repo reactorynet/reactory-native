@@ -805,6 +805,113 @@ describe('ReactorySDK', () => {
   });
 
   // ============================================================================
+  // Test Group 1.7: Component Registry Integration
+  // ============================================================================
+  
+  describe('Component Registry Integration', () => {
+    
+    // Test component registration through SDK
+    it('should register components through SDK interface', () => {
+      const sdk = new ReactorySDK(validConfig);
+      const TestComponent = () => null;
+      
+      sdk.registerComponent('TestComponent', TestComponent, {
+        namespace: 'test',
+        version: '1.0.0'
+      });
+      
+      expect(sdk.hasComponent('TestComponent')).toBe(true);
+      expect(sdk.getComponent('TestComponent')).toBe(TestComponent);
+    });
+
+    // Test component retrieval through SDK
+    it('should retrieve components through SDK interface', () => {
+      const sdk = new ReactorySDK(validConfig);
+      const TestComponent = () => null;
+      
+      sdk.registerComponent('TestComponent', TestComponent);
+      
+      const retrieved = sdk.getComponent('TestComponent');
+      expect(retrieved).toBe(TestComponent);
+      
+      const nonExistent = sdk.getComponent('NonExistent');
+      expect(nonExistent).toBeNull();
+    });
+
+    // Test component management through SDK
+    it('should manage components through SDK interface', () => {
+      const sdk = new ReactorySDK(validConfig);
+      const TestComponent1 = () => null;
+      const TestComponent2 = () => null;
+      
+      // Register multiple components
+      sdk.registerComponent('TestComponent1', TestComponent1);
+      sdk.registerComponent('TestComponent2', TestComponent2);
+      
+      // Check all components
+      const allComponents = sdk.getAllComponents();
+      expect(allComponents.size).toBe(2);
+      
+      // Unregister one component
+      const result = sdk.unregisterComponent('TestComponent1');
+      expect(result).toBe(true);
+      expect(sdk.hasComponent('TestComponent1')).toBe(false);
+      expect(sdk.hasComponent('TestComponent2')).toBe(true);
+      
+      // Clear all components
+      sdk.clearComponents();
+      expect(sdk.getAllComponents().size).toBe(0);
+    });
+
+    // Test namespace and tag filtering through SDK
+    it('should filter components by namespace and tags through SDK', () => {
+      const sdk = new ReactorySDK(validConfig);
+      const TestComponent1 = () => null;
+      const TestComponent2 = () => null;
+      
+      sdk.registerComponent('TestComponent1', TestComponent1, {
+        namespace: 'forms',
+        tags: ['input', 'validation']
+      });
+      
+      sdk.registerComponent('TestComponent2', TestComponent2, {
+        namespace: 'widgets',
+        tags: ['display', 'charts']
+      });
+      
+      // Test namespace filtering
+      const formsComponents = sdk.getComponentsByNamespace('forms');
+      expect(formsComponents).toHaveLength(1);
+      expect(formsComponents[0].name).toBe('TestComponent1');
+      
+      // Test tag filtering
+      const inputComponents = sdk.getComponentsByTag('input');
+      expect(inputComponents).toHaveLength(1);
+      expect(inputComponents[0].name).toBe('TestComponent1');
+    });
+
+    // Test component events through SDK
+    it('should emit component events through SDK event system', () => {
+      const sdk = new ReactorySDK(validConfig);
+      const TestComponent = () => null;
+      const eventListener = jest.fn();
+      
+      // Listen for component registration events
+      sdk.on('component:registered', eventListener);
+      
+      sdk.registerComponent('TestComponent', TestComponent, {
+        namespace: 'test'
+      });
+      
+      expect(eventListener).toHaveBeenCalledWith({
+        name: 'TestComponent',
+        component: TestComponent,
+        options: { namespace: 'test' }
+      });
+    });
+  });
+
+  // ============================================================================
   // Test Group 1.6: Configuration Management
   // ============================================================================
   

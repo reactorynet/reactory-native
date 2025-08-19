@@ -11,6 +11,9 @@
  */
 
 import { ReactorySDKConfig } from './types';
+import { ComponentRegistry } from './ComponentRegistry';
+import { AuthenticationManager } from './AuthenticationManager';
+import { ConfigurationManager } from './ConfigurationManager';
 
 /**
  * Constructor to create a storage for our `EE` objects.
@@ -410,14 +413,17 @@ interface IAuthenticationManager {
   initialize(): Promise<void>;
 }
 
-interface IComponentRegistry {
-  initialize(): Promise<void>;
-}
-
 interface IConfigurationManager {
   initialize(): Promise<void>;
-  get<T>(key: string): T | undefined;
-  set(key: string, value: any): void;
+  loadConfiguration(forceReload?: boolean): Promise<any>;
+  get<T>(keyPath: string, defaultValue?: T): T | undefined;
+  set(keyPath: string, value: any): void;
+  getAll(): object | null;
+  has(keyPath: string): boolean;
+  merge(updates: any): void;
+  persist(): Promise<void>;
+  clearCache(): void;
+  subscribe(keyPath: string, callback: (newValue: any, oldValue: any) => void): () => void;
 }
 
 interface IFormSchemaManager {
@@ -430,10 +436,11 @@ interface IFormSchemaManager {
 export class ReactorySDK extends EventEmitter {
   private readonly config: ReactorySDKConfig;
   private authManager!: IAuthenticationManager;
-  private componentRegistry!: IComponentRegistry;
+  private componentRegistry!: ComponentRegistry;
   private configManager!: IConfigurationManager;
   private formSchemaManager!: IFormSchemaManager;
   private isInitializedFlag: boolean = false;
+  public client: any = null; // GraphQL client - initialized during setup
 
   /**
    * Constructor - Initialize SDK with configuration parameters
@@ -493,28 +500,17 @@ export class ReactorySDK extends EventEmitter {
 
   /**
    * Initialize all internal managers
-   * Creates placeholder manager instances for testing
+   * Creates instances of all manager classes
    */
   private initializeManagers(): void {
-    // Create placeholder manager instances
-    // These will be replaced with actual implementations in later phases
-    this.authManager = {
-      initialize: async () => {}
-    };
+    // Initialize AuthenticationManager with SDK instance
+    this.authManager = new AuthenticationManager(this);
 
-    this.componentRegistry = {
-      initialize: async () => {}
-    };
+    // Initialize ConfigurationManager with SDK instance
+    this.configManager = new ConfigurationManager(this);
 
-    this.configManager = {
-      initialize: async () => {},
-      get: <T>(key: string): T | undefined => {
-        return (this.config as any)[key];
-      },
-      set: (key: string, value: any) => {
-        (this.config as any)[key] = value;
-      }
-    };
+    this.componentRegistry = new ComponentRegistry();
+    this.componentRegistry.setEventEmitter(this);
 
     this.formSchemaManager = {
       initialize: async () => {}
@@ -558,7 +554,6 @@ export class ReactorySDK extends EventEmitter {
       // Initialize all managers
       await Promise.all([
         this.authManager.initialize(),
-        this.componentRegistry.initialize(),
         this.configManager.initialize(),
         this.formSchemaManager.initialize()
       ]);
@@ -578,5 +573,147 @@ export class ReactorySDK extends EventEmitter {
    */
   public isInitialized(): boolean {
     return this.isInitializedFlag;
+  }
+
+  // ============================================================================
+  // Manager Access Methods
+  // ============================================================================
+
+  /**
+   * Get the authentication manager instance
+   * 
+   * @returns IAuthenticationManager - Authentication manager instance
+   */
+  public getAuthManager(): IAuthenticationManager {
+    return this.authManager;
+  }
+
+  // ============================================================================
+  // Component Registry Methods
+  // ============================================================================
+
+  /**
+   * Register a component in the component registry
+   * 
+   * @param name Component name/identifier
+   * @param component React component
+   * @param options Registration options
+   */
+  public registerComponent(name: string, component: any, options?: any): void {
+    return this.componentRegistry.register(name, component, options);
+  }
+
+  /**
+   * Get a registered component
+   * 
+   * @param name Component name
+   * @returns Component or null if not found
+   */
+  public getComponent(name: string): any {
+    return this.componentRegistry.get(name);
+  }
+
+  /**
+   * Check if a component is registered
+   * 
+   * @param name Component name
+   * @returns True if component exists
+   */
+  public hasComponent(name: string): boolean {
+    return this.componentRegistry.has(name);
+  }
+
+  /**
+   * Get all registered components
+   * 
+   * @returns Map of all registered components
+   */
+  public getAllComponents(): Map<string, any> {
+    return this.componentRegistry.getAll();
+  }
+
+  /**
+   * Unregister a component
+   * 
+   * @param name Component name
+   * @returns True if component was removed, false if not found
+   */
+  public unregisterComponent(name: string): boolean {
+    return this.componentRegistry.unregister(name);
+  }
+
+  /**
+   * Clear all registered components
+   */
+  public clearComponents(): void {
+    return this.componentRegistry.clear();
+  }
+
+  /**
+   * Get components by namespace
+   * 
+   * @param namespace Namespace to filter by
+   * @returns Array of components in the namespace
+   */
+  public getComponentsByNamespace(namespace: string): any[] {
+    return this.componentRegistry.getByNamespace(namespace);
+  }
+
+  /**
+   * Get components by tag
+   * 
+   * @param tag Tag to filter by
+   * @returns Array of components with the tag
+   */
+  public getComponentsByTag(tag: string): any[] {
+    return this.componentRegistry.getByTag(tag);
+  }
+
+  // ============================================================================
+  // Logging Methods
+  // ============================================================================
+
+  /**
+   * Log debug message (only when debug mode is enabled)
+   * 
+   * @param message Debug message
+   * @param data Additional data to log
+   */
+  public debug(message: string, data?: any): void {
+    if (this.config.debug) {
+      if (data !== undefined) {
+        console.log(`[ReactorySDK] DEBUG: ${message}`, data);
+      } else {
+        console.log(`[ReactorySDK] DEBUG: ${message}`);
+      }
+    }
+  }
+
+  /**
+   * Log error message
+   * 
+   * @param message Error message
+   * @param error Error object or additional data
+   */
+  public error(message: string, error?: any): void {
+    if (error !== undefined) {
+      console.error(`[ReactorySDK] ERROR: ${message}`, error);
+    } else {
+      console.error(`[ReactorySDK] ERROR: ${message}`);
+    }
+  }
+
+  /**
+   * Log info message
+   * 
+   * @param message Info message
+   * @param data Additional data to log
+   */
+  public info(message: string, data?: any): void {
+    if (data !== undefined) {
+      console.log(`[ReactorySDK] INFO: ${message}`, data);
+    } else {
+      console.log(`[ReactorySDK] INFO: ${message}`);
+    }
   }
 }
