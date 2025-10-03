@@ -11,9 +11,15 @@
  */
 
 import { ReactorySDKConfig } from './types';
-import { ComponentRegistry } from './ComponentRegistry';
-import { AuthenticationManager } from './AuthenticationManager';
 import { ConfigurationManager } from './ConfigurationManager';
+import { FormSchemaManager } from './FormSchemaManager';
+import { NetworkManager } from './NetworkManager';
+import { ThemeManager } from './ThemeManager';
+import type { 
+  User, 
+  Organization,
+  UserMembership
+} from './types';
 
 /**
  * Constructor to create a storage for our `EE` objects.
@@ -407,39 +413,19 @@ class EventEmitter {
 }
 
 /**
- * Placeholder manager interfaces for basic setup
- */
-interface IAuthenticationManager {
-  initialize(): Promise<void>;
-}
-
-interface IConfigurationManager {
-  initialize(): Promise<void>;
-  loadConfiguration(forceReload?: boolean): Promise<any>;
-  get<T>(keyPath: string, defaultValue?: T): T | undefined;
-  set(keyPath: string, value: any): void;
-  getAll(): object | null;
-  has(keyPath: string): boolean;
-  merge(updates: any): void;
-  persist(): Promise<void>;
-  clearCache(): void;
-  subscribe(keyPath: string, callback: (newValue: any, oldValue: any) => void): () => void;
-}
-
-interface IFormSchemaManager {
-  initialize(): Promise<void>;
-}
-
-/**
  * Main ReactorySDK class extending EventEmitter for event-driven architecture
  */
 export class ReactorySDK extends EventEmitter {
   private readonly config: ReactorySDKConfig;
-  private authManager!: IAuthenticationManager;
-  private componentRegistry!: ComponentRegistry;
-  private configManager!: IConfigurationManager;
-  private formSchemaManager!: IFormSchemaManager;
+  private _configuration?: ConfigurationManager;
+  private _forms?: FormSchemaManager;
+  private _network?: NetworkManager;
+  private _theme?: ThemeManager;
   private isInitializedFlag: boolean = false;
+  private _isDestroyed: boolean = false;
+  private readonly _user: User | null = null;
+  private readonly _organization: Organization | null = null;
+  private readonly _memberships: UserMembership[] = [];
   public client: any = null; // GraphQL client - initialized during setup
 
   /**
@@ -458,105 +444,126 @@ export class ReactorySDK extends EventEmitter {
     // Store configuration with defaults
     this.config = this.setConfigDefaults(config);
 
-    // Initialize all internal managers
-    this.initializeManagers();
+    // Set Apollo Client from config if provided
+    this.client = (config as any).apolloClient || null;
   }
 
   /**
-   * Validate configuration parameters
-   * 
-   * @param config ReactorySDKConfig - Configuration to validate
-   * @throws Error if configuration is invalid
+   * Validate configuration parameters during construction
+   * @param config ReactorySDKConfig to validate
+   * @throws Error if validation fails
    */
   private validateConfig(config: ReactorySDKConfig): void {
-    if (!config.apiEndpoint) {
-      throw new Error('apiEndpoint is required');
+    if (!config) {
+      throw new Error('ReactorySDK configuration is required');
     }
 
-    if (!config.clientKey) {
-      throw new Error('clientKey is required');
+    if (!config.apiEndpoint || typeof config.apiEndpoint !== 'string') {
+      throw new Error('ReactorySDK requires a valid apiEndpoint');
     }
 
-    // Simple URL validation - check if it starts with http/https
-    if (!config.apiEndpoint.startsWith('http://') && !config.apiEndpoint.startsWith('https://')) {
-      throw new Error('Invalid API endpoint URL');
+    if (!config.clientKey || typeof config.clientKey !== 'string') {
+      throw new Error('ReactorySDK requires a valid clientKey');
     }
   }
 
   /**
-   * Set default values for optional configuration parameters
-   * 
-   * @param config ReactorySDKConfig - Input configuration
-   * @returns ReactorySDKConfig - Configuration with defaults applied
+   * Set default configuration values for optional parameters
+   * @param config ReactorySDKConfig
+   * @returns ReactorySDKConfig with defaults applied
    */
   private setConfigDefaults(config: ReactorySDKConfig): ReactorySDKConfig {
     return {
       ...config,
       debug: config.debug ?? false,
       offline: config.offline ?? false,
-      plugins: config.plugins ?? []
+      plugins: config.plugins ?? [],
     };
   }
 
   /**
-   * Initialize all internal managers
-   * Creates instances of all manager classes
+   * Initialize all manager instances asynchronously
+   * Called during SDK initialization
    */
-  private initializeManagers(): void {
-    // Initialize AuthenticationManager with SDK instance
-    this.authManager = new AuthenticationManager(this);
+  private async initializeManagers(): Promise<void> {
+    try {
+      // Initialize Configuration Manager first as others depend on it
+      this._configuration = new ConfigurationManager(this, this.config.clientKey);
 
-    // Initialize ConfigurationManager with SDK instance
-    this.configManager = new ConfigurationManager(this);
+      // Initialize Network Manager
+      this._network = new NetworkManager(this, {
+        endpoints: {
+          graphql: this.config.apiEndpoint,
+        },
+        timeout: 10000,
+        maxRetries: 3,
+        enableRetry: true,
+      });
 
-    this.componentRegistry = new ComponentRegistry();
-    this.componentRegistry.setEventEmitter(this);
+      // Initialize Theme Manager
+      this._theme = new ThemeManager(this, {
+        defaultTheme: this.config.theme,
+        enableThemePersistence: true,
+        enableAutoThemeDetection: false,
+      });
 
-    this.formSchemaManager = {
-      initialize: async () => {}
-    };
+      // Initialize Form Schema Manager
+      this._forms = new FormSchemaManager(this, {
+        maxCacheSize: 100,
+        enableCaching: true,
+        cacheExpirationMs: 3600000, // 1 hour
+        enableOfflineSupport: this.config.offline || false,
+        retryConfig: {
+          maxRetries: 3,
+          retryDelayMs: 1000,
+          exponentialBackoff: true,
+        },
+        enableRealTimeUpdates: false,
+      });
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error during manager initialization';
+      throw new Error(`Failed to initialize ReactorySDK managers: ${message}`);
+    }
   }
 
-  /**
-   * Get configuration value
-   * 
-   * @param key string - Configuration key
-   * @returns T | undefined - Configuration value or undefined if not found
-   */
-  public getConfig<T>(key: string): T | undefined {
-    return this.configManager.get<T>(key);
-  }
-
-  /**
-   * Set configuration value
-   * 
-   * @param key string - Configuration key
-   * @param value any - Configuration value
-   */
-  public setConfig(key: string, value: any): void {
-    this.configManager.set(key, value);
-  }
+  // ============================================================================
+  // Public Initialization Methods
+  // ============================================================================
 
   /**
    * Perform async initialization of all subsystems
-   * 
    * @returns Promise<void>
-   * @throws ReactorySDKError if initialization fails
+   * @throws Error if initialization fails
    */
   public async initialize(): Promise<void> {
     if (this.isInitializedFlag) {
       return;
     }
 
+    if (this._isDestroyed) {
+      throw new Error('Cannot initialize destroyed SDK instance');
+    }
+
     try {
       this.emit('initializing');
 
       // Initialize all managers
-      await Promise.all([
-        this.authManager.initialize(),
-        this.configManager.initialize(),
-        this.formSchemaManager.initialize()
-      ]);
+      await this.initializeManagers();
+
+      // Initialize each manager
+      if (this._configuration) {
+        await this._configuration.initialize();
+      }
+      if (this._network) {
+        await this._network.initialize();
+      }
+      if (this._theme) {
+        await this._theme.initialize();
+      }
+      if (this._forms) {
+        await this._forms.initialize();
+      }
 
       this.isInitializedFlag = true;
       this.emit('initialized');
@@ -568,11 +575,50 @@ export class ReactorySDK extends EventEmitter {
 
   /**
    * Check if SDK is initialized
-   * 
    * @returns boolean - True if initialized, false otherwise
    */
   public isInitialized(): boolean {
     return this.isInitializedFlag;
+  }
+
+  /**
+   * Destroy the SDK instance and cleanup resources
+   * @returns Promise<void>
+   */
+  public async destroy(): Promise<void> {
+    if (this._isDestroyed) {
+      return;
+    }
+
+    try {
+      this.emit('destroying');
+
+      // Destroy all managers
+      if (this._forms) {
+        await this._forms.destroy();
+        this._forms = undefined;
+      }
+      if (this._theme) {
+        await this._theme.destroy();
+        this._theme = undefined;
+      }
+      if (this._network) {
+        await this._network.destroy();
+        this._network = undefined;
+      }
+      if (this._configuration) {
+        // Configuration manager doesn't have destroy method yet
+        this._configuration = undefined;
+      }
+
+      this.isInitializedFlag = false;
+      this._isDestroyed = true;
+      this.removeAllListeners();
+      this.emit('destroyed');
+    } catch (error) {
+      this.emit('destruction_failed', error);
+      throw error;
+    }
   }
 
   // ============================================================================
@@ -580,93 +626,69 @@ export class ReactorySDK extends EventEmitter {
   // ============================================================================
 
   /**
-   * Get the authentication manager instance
-   * 
-   * @returns IAuthenticationManager - Authentication manager instance
+   * Get the configuration manager instance
+   * @returns ConfigurationManager
+   * @throws Error if SDK not initialized
    */
-  public getAuthManager(): IAuthenticationManager {
-    return this.authManager;
+  public get configuration(): ConfigurationManager {
+    if (!this._configuration) {
+      throw new Error('SDK not initialized. Call initialize() first.');
+    }
+    return this._configuration;
+  }
+
+  /**
+   * Get the form schema manager instance
+   * @returns FormSchemaManager
+   * @throws Error if SDK not initialized
+   */
+  public get forms(): FormSchemaManager {
+    if (!this._forms) {
+      throw new Error('SDK not initialized. Call initialize() first.');
+    }
+    return this._forms;
+  }
+
+  /**
+   * Get the network manager instance
+   * @returns NetworkManager
+   * @throws Error if SDK not initialized
+   */
+  public get network(): NetworkManager {
+    if (!this._network) {
+      throw new Error('SDK not initialized. Call initialize() first.');
+    }
+    return this._network;
+  }
+
+  /**
+   * Get the theme manager instance
+   * @returns ThemeManager
+   * @throws Error if SDK not initialized
+   */
+  public get theme(): ThemeManager {
+    if (!this._theme) {
+      throw new Error('SDK not initialized. Call initialize() first.');
+    }
+    return this._theme;
   }
 
   // ============================================================================
-  // Component Registry Methods
+  // Legacy Compatibility Methods (Deprecated)
   // ============================================================================
 
   /**
-   * Register a component in the component registry
-   * 
-   * @param name Component name/identifier
-   * @param component React component
-   * @param options Registration options
+   * @deprecated Use configuration.get() instead
    */
-  public registerComponent(name: string, component: any, options?: any): void {
-    return this.componentRegistry.register(name, component, options);
+  public getConfig<T>(key: string): T | undefined {
+    return this.configuration.get<T>(key);
   }
 
   /**
-   * Get a registered component
-   * 
-   * @param name Component name
-   * @returns Component or null if not found
+   * @deprecated Use configuration.set() instead
    */
-  public getComponent(name: string): any {
-    return this.componentRegistry.get(name);
-  }
-
-  /**
-   * Check if a component is registered
-   * 
-   * @param name Component name
-   * @returns True if component exists
-   */
-  public hasComponent(name: string): boolean {
-    return this.componentRegistry.has(name);
-  }
-
-  /**
-   * Get all registered components
-   * 
-   * @returns Map of all registered components
-   */
-  public getAllComponents(): Map<string, any> {
-    return this.componentRegistry.getAll();
-  }
-
-  /**
-   * Unregister a component
-   * 
-   * @param name Component name
-   * @returns True if component was removed, false if not found
-   */
-  public unregisterComponent(name: string): boolean {
-    return this.componentRegistry.unregister(name);
-  }
-
-  /**
-   * Clear all registered components
-   */
-  public clearComponents(): void {
-    return this.componentRegistry.clear();
-  }
-
-  /**
-   * Get components by namespace
-   * 
-   * @param namespace Namespace to filter by
-   * @returns Array of components in the namespace
-   */
-  public getComponentsByNamespace(namespace: string): any[] {
-    return this.componentRegistry.getByNamespace(namespace);
-  }
-
-  /**
-   * Get components by tag
-   * 
-   * @param tag Tag to filter by
-   * @returns Array of components with the tag
-   */
-  public getComponentsByTag(tag: string): any[] {
-    return this.componentRegistry.getByTag(tag);
+  public setConfig(key: string, value: any): void {
+    this.configuration.set(key, value);
   }
 
   // ============================================================================
@@ -675,7 +697,6 @@ export class ReactorySDK extends EventEmitter {
 
   /**
    * Log debug message (only when debug mode is enabled)
-   * 
    * @param message Debug message
    * @param data Additional data to log
    */

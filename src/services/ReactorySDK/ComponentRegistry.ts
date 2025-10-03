@@ -75,7 +75,9 @@ export class ComponentRegistry implements IComponentRegistry {
 
     // Prepare registration data
     const registeredComponent: RegisteredComponent = {
+      nameSpace: options?.nameSpace || 'default',
       name,
+      version: options?.version || '1.0.0',
       component,
       options: options || {},
       registeredAt: new Date(),
@@ -87,6 +89,9 @@ export class ComponentRegistry implements IComponentRegistry {
 
     // Emit registration event
     this.emit('component:registered', {
+      fqn: `${registeredComponent.nameSpace}.${name}@${registeredComponent.version}`,
+      nameSpace: registeredComponent.nameSpace,
+      version: registeredComponent.version,
       name,
       component,
       options: options || {}
@@ -157,7 +162,7 @@ export class ComponentRegistry implements IComponentRegistry {
     const results: RegisteredComponent[] = [];
     
     for (const component of this.components.values()) {
-      if (component.options.namespace === namespace) {
+      if (component.options.nameSpace === namespace) {
         results.push(component);
       }
     }

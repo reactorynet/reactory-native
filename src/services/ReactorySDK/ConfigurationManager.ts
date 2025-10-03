@@ -1,18 +1,16 @@
 /**
- * ConfigurationManager Implementation
+ * ConfigurationManager - Simplified Working Version
  * 
- * Manages application configuration including loading from server, caching,
- * validation, and real-time updates. Supports multi-client configurations
- * and environment-specific settings.
+ * Manages application configuration with dependency injection to avoid circular dependencies
  * 
  * @version 1.0.0
- * @created August 19, 2025
+ * @created August 20, 2025
  */
 
 import { ReactorySDK } from './ReactorySDK';
 
 // Configuration interfaces
-interface Configuration {
+export interface Configuration {
   client: {
     name: string;
     version: string;
@@ -35,17 +33,7 @@ interface Configuration {
   };
 }
 
-interface ConfigurationUpdateNotification {
-  key: string;
-  value: any;
-  timestamp: number;
-}
-
-interface CacheEntry {
-  data: Configuration;
-  timestamp: number;
-  ttl: number;
-}
+export type ConfigurationCallback = (value: any, key: string) => void;
 
 export class ConfigurationValidationError extends Error {
   constructor(message: string) {
@@ -82,38 +70,25 @@ const GET_CONFIGURATION_QUERY = `
   }
 `;
 
-const UPDATE_CONFIGURATION_MUTATION = `
-  mutation UpdateConfiguration($clientKey: String!, $configuration: ConfigurationInput!) {
-    updateConfiguration(clientKey: $clientKey, configuration: $configuration) {
-      success
-      configuration {
-        client {
-          name
-          version
-          theme
-        }
-      }
-    }
-  }
-`;
-
 /**
- * ConfigurationManager handles all configuration-related operations
+ * ConfigurationManager class with dependency injection
  */
 export class ConfigurationManager {
   private readonly sdk: ReactorySDK;
+  private readonly clientKey: string;
   private configuration: Configuration | null = null;
-  private cache: CacheEntry | null = null;
-  private isInitialized: boolean = false;
-  private readonly defaultCacheTTL: number = 5 * 60 * 1000; // 5 minutes
+  private cache: { data: Configuration; timestamp: number; ttl: number } | null = null;
+  private readonly subscriptions = new Map<string, Set<ConfigurationCallback>>();
+  private isInitialized = false;
   private initializationPromise: Promise<void> | null = null;
-  private readonly subscribers: Map<string, ((newValue: any, oldValue: any) => void)[]> = new Map();
+  private readonly defaultCacheTTL = 5 * 60 * 1000; // 5 minutes
 
-  constructor(sdk: ReactorySDK) {
+  constructor(sdk: ReactorySDK, clientKey: string = 'test-client') {
     if (!sdk) {
       throw new Error('SDK instance is required');
     }
     this.sdk = sdk;
+    this.clientKey = clientKey;
   }
 
   /**
@@ -152,7 +127,7 @@ export class ConfigurationManager {
    */
   async loadConfiguration(forceReload: boolean = false): Promise<Configuration> {
     try {
-      // Check cache first unless force reload or this is during initialization
+      // Check cache first unless force reload
       if (!forceReload && this.cache && this.isCacheValid() && this.isInitialized) {
         this.sdk.debug?.('Using cached configuration');
         this.configuration = this.cache.data;
@@ -164,7 +139,7 @@ export class ConfigurationManager {
       const response = await this.sdk.client.query({
         query: GET_CONFIGURATION_QUERY,
         variables: {
-          clientKey: this.sdk.getConfig('clientKey') || 'test-client'
+          clientKey: this.clientKey
         }
       });
 
@@ -177,27 +152,18 @@ export class ConfigurationManager {
       // Validate configuration
       this.validate(config);
 
-      // Deep clone the configuration to avoid reference issues
-      const clonedConfig = JSON.parse(JSON.stringify(config));
+      // Update configuration and cache
+      this.configuration = config;
+      this.cache = {
+        data: config,
+        timestamp: Date.now(),
+        ttl: this.defaultCacheTTL
+      };
 
-      // Update cache only after initialization
-      if (this.isInitialized) {
-        this.cache = {
-          data: clonedConfig,
-          timestamp: Date.now(),
-          ttl: this.defaultCacheTTL
-        };
-      }
-
-      this.configuration = clonedConfig;
-
-      this.sdk.emit?.('configuration_loaded', { configuration: clonedConfig });
-      return clonedConfig;
-
+      this.sdk.debug?.('Configuration loaded successfully');
+      return config;
     } catch (error) {
       this.sdk.error?.('Failed to load configuration', error);
-      this.sdk.emit?.('configuration_load_failed', { error });
-      
       throw error;
     }
   }
@@ -205,7 +171,7 @@ export class ConfigurationManager {
   /**
    * Get configuration value by key path
    */
-  get<T = any>(keyPath: string, defaultValue?: T): T | undefined {
+  get<T>(keyPath: string, defaultValue?: T): T | undefined {
     if (!this.configuration) {
       return defaultValue;
     }
@@ -236,9 +202,8 @@ export class ConfigurationManager {
     const lastKey = keys.pop()!;
     let current: any = this.configuration;
 
-    // Navigate to parent object
     for (const key of keys) {
-      if (!current[key] || typeof current[key] !== 'object') {
+      if (!(key in current)) {
         current[key] = {};
       }
       current = current[key];
@@ -247,82 +212,78 @@ export class ConfigurationManager {
     const oldValue = current[lastKey];
     current[lastKey] = value;
 
-    // Notify subscribers
+    // Emit change events
     this.notifySubscribers(keyPath, value, oldValue);
-
-    // Emit change event
     this.sdk.emit?.('configuration_changed', {
       key: keyPath,
       oldValue,
       newValue: value
     });
-
-    // Invalidate cache
-    if (this.cache) {
-      this.cache.data = { ...this.configuration };
-    }
   }
 
   /**
-   * Get all configuration
+   * Subscribe to configuration changes
    */
-  getAll(): Configuration | null {
-    return this.configuration;
+  subscribe(keyPath: string, callback: ConfigurationCallback): () => void {
+    if (!this.subscriptions.has(keyPath)) {
+      this.subscriptions.set(keyPath, new Set());
+    }
+
+    this.subscriptions.get(keyPath)!.add(callback);
+
+    // Return unsubscribe function
+    return () => {
+      const callbacks = this.subscriptions.get(keyPath);
+      if (callbacks) {
+        callbacks.delete(callback);
+        if (callbacks.size === 0) {
+          this.subscriptions.delete(keyPath);
+        }
+      }
+    };
   }
 
   /**
-   * Check if configuration key exists
+   * Check if configuration exists
    */
   has(keyPath: string): boolean {
     return this.get(keyPath) !== undefined;
   }
 
   /**
-   * Get configuration section
+   * Get entire configuration object
    */
-  getSection<T = any>(sectionKey: string): T | undefined {
-    return this.get<T>(sectionKey);
+  getConfig(): Configuration | null {
+    return this.configuration;
   }
 
   /**
-   * Merge configuration object
+   * Get entire configuration object (alias for getConfig)
+   */
+  getAll(): Configuration | null {
+    return this.configuration;
+  }
+
+  /**
+   * Get configuration section
+   */
+  getSection<T>(sectionName: string): T | undefined {
+    return this.get<T>(sectionName);
+  }
+
+  /**
+   * Merge configuration objects
    */
   merge(updates: Partial<Configuration>): void {
     if (!this.configuration) {
       throw new Error('Configuration not loaded');
     }
 
-    const mergeObject = (target: any, source: any, path: string = '') => {
-      for (const key in source) {
-        if (source.hasOwnProperty(key)) {
-          const fullPath = path ? `${path}.${key}` : key;
-          
-          if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key]) &&
-              target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])) {
-            // Deep merge objects
-            mergeObject(target[key], source[key], fullPath);
-          } else {
-            const oldValue = target[key];
-            target[key] = source[key];
-            
-            // Notify for each changed value
-            this.notifySubscribers(fullPath, source[key], oldValue);
-            this.sdk.emit?.('configuration_changed', {
-              key: fullPath,
-              oldValue,
-              newValue: source[key]
-            });
-          }
-        }
-      }
-    };
-
-    mergeObject(this.configuration, updates);
-
-    // Update cache
-    if (this.cache) {
-      this.cache.data = { ...this.configuration };
-    }
+    // Deep merge the updates into current configuration
+    this.configuration = this.deepMerge(this.configuration, updates);
+    
+    // Emit merge event
+    this.sdk.emit?.('configuration_merged', { updates });
   }
 
   /**
@@ -335,17 +296,20 @@ export class ConfigurationManager {
 
     try {
       await this.sdk.client.mutate({
-        mutation: UPDATE_CONFIGURATION_MUTATION,
+        query: `
+          mutation UpdateConfiguration($clientKey: String!, $configuration: ConfigurationInput!) {
+            updateConfiguration(clientKey: $clientKey, configuration: $configuration) {
+              success
+            }
+          }
+        `,
         variables: {
-          clientKey: this.sdk.getConfig('clientKey') || 'test-client',
+          clientKey: this.clientKey,
           configuration: this.configuration
         }
       });
 
-      // Also persist to local storage
-      await this.persistToStorage();
-
-      this.sdk.emit?.('configuration_persisted', { configuration: this.configuration });
+      this.sdk.debug?.('Configuration persisted successfully');
     } catch (error) {
       this.sdk.error?.('Failed to persist configuration', error);
       throw error;
@@ -361,148 +325,70 @@ export class ConfigurationManager {
     }
 
     // Validate required sections
-    if (!config.client) {
-      throw new ConfigurationValidationError('client configuration is required');
-    }
-
-    if (!config.api) {
-      throw new ConfigurationValidationError('api configuration is required');
-    }
-
-    if (!config.ui) {
-      throw new ConfigurationValidationError('ui configuration is required');
+    const requiredSections = ['client', 'api', 'ui'];
+    for (const section of requiredSections) {
+      if (!config[section]) {
+        throw new ConfigurationValidationError(`${section} configuration is required`);
+      }
     }
 
     // Validate client section
-    if (typeof config.client.name !== 'string') {
-      throw new ConfigurationValidationError('client.name must be a string');
+    if (!config.client.name || !config.client.version) {
+      throw new ConfigurationValidationError('Client name and version are required');
     }
 
-    if (typeof config.client.version !== 'string') {
-      throw new ConfigurationValidationError('client.version must be a string');
-    }
-
-    // Validate api section
-    if (typeof config.api.timeout !== 'number') {
+    // Validate field types
+    if (config.api && config.api.timeout && typeof config.api.timeout !== 'number') {
       throw new ConfigurationValidationError('api.timeout must be a number');
     }
-
-    if (typeof config.api.retryAttempts !== 'number') {
-      throw new ConfigurationValidationError('api.retryAttempts must be a number');
-    }
-
-    // Validate ui section
-    if (typeof config.ui.defaultLanguage !== 'string') {
-      throw new ConfigurationValidationError('ui.defaultLanguage must be a string');
-    }
-  }
-
-  /**
-   * Clear configuration cache
-   */
-  clearCache(): void {
-    this.cache = null;
-    this.sdk.debug?.('Configuration cache cleared');
   }
 
   /**
    * Handle real-time configuration updates
    */
-  handleConfigurationUpdate(notification: ConfigurationUpdateNotification): void {
-    try {
-      // Validate the update
-      if (!notification.key || notification.value === undefined) {
-        throw new Error('Invalid configuration update');
-      }
-
-      // Check if configuration is loaded first
-      if (!this.configuration) {
-        throw new Error('Configuration not loaded');
-      }
-
-      // Validate the update value based on the key
-      this.validateUpdateValue(notification.key, notification.value);
-
-      // Apply the update
-      this.set(notification.key, notification.value);
-
-      this.sdk.emit?.('configuration_updated', notification);
-      this.sdk.debug?.(`Configuration updated: ${notification.key} = ${notification.value}`);
-    } catch (error) {
-      this.sdk.error?.('Failed to handle configuration update', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Validate a configuration update value
-   */
-  private validateUpdateValue(keyPath: string, value: any): void {
-    // Validate specific types for known configuration keys
-    if (keyPath === 'api.timeout' && typeof value !== 'number') {
+  handleConfigurationUpdate(update: { key: string; value: any; timestamp: number }): void {
+    if (!update || !update.key || update.value === undefined) {
       throw new Error('Invalid configuration update');
     }
-    
-    if (keyPath === 'api.retryAttempts' && typeof value !== 'number') {
-      throw new Error('Invalid configuration update');
-    }
-    
-    if (keyPath.startsWith('client.name') && typeof value !== 'string') {
-      throw new Error('Invalid configuration update');
-    }
-    
-    if (keyPath.startsWith('client.version') && typeof value !== 'string') {
-      throw new Error('Invalid configuration update');
-    }
-    
-    if (keyPath === 'ui.defaultLanguage' && typeof value !== 'string') {
-      throw new Error('Invalid configuration update');
-    }
-  }
 
-  /**
-   * Subscribe to configuration changes
-   */
-  subscribe(keyPath: string, callback: (newValue: any, oldValue: any) => void): () => void {
-    if (!this.subscribers.has(keyPath)) {
-      this.subscribers.set(keyPath, []);
-    }
-
-    this.subscribers.get(keyPath)!.push(callback);
-
-    // Return unsubscribe function
-    return () => {
-      const callbacks = this.subscribers.get(keyPath);
-      if (callbacks) {
-        const index = callbacks.indexOf(callback);
-        if (index > -1) {
-          callbacks.splice(index, 1);
-        }
-      }
-    };
+    this.set(update.key, update.value);
+    this.sdk.emit?.('configuration_updated', update);
   }
 
   /**
    * Check if cache is valid
    */
   private isCacheValid(): boolean {
-    if (!this.cache) {
-      return false;
-    }
+    if (!this.cache) return false;
+    return Date.now() - this.cache.timestamp < this.cache.ttl;
+  }
 
-    const now = Date.now();
-    return (now - this.cache.timestamp) < this.cache.ttl;
+  /**
+   * Deep merge two objects
+   */
+  private deepMerge(target: any, source: any): any {
+    const result = { ...target };
+    
+    for (const key in source) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+        result[key] = this.deepMerge(target[key] || {}, source[key]);
+      } else {
+        result[key] = source[key];
+      }
+    }
+    
+    return result;
   }
 
   /**
    * Notify subscribers of configuration changes
    */
-  private notifySubscribers(keyPath: string, newValue: any, oldValue: any): void {
-    const callbacks = this.subscribers.get(keyPath);
-    if (callbacks) {
-      callbacks.forEach(callback => {
+  private notifySubscribers(keyPath: string, newValue: any, _oldValue: any): void {
+    const callbacks = this.subscriptions.get(keyPath);
+    if (callbacks && callbacks.size > 0) {
+      callbacks.forEach((callback: ConfigurationCallback) => {
         try {
-          callback(newValue, oldValue);
+          callback(newValue, keyPath);
         } catch (error) {
           this.sdk.error?.('Error in configuration change callback', error);
         }
@@ -511,27 +397,22 @@ export class ConfigurationManager {
   }
 
   /**
-   * Persist configuration to local storage
+   * Clear cache
    */
-  private async persistToStorage(): Promise<void> {
-    try {
-      // In a real implementation, this would use AsyncStorage or SecureStore
-      // For now, we'll simulate storage persistence
-      this.sdk.debug?.('Configuration persisted to local storage');
-    } catch (error) {
-      this.sdk.error?.('Failed to persist to storage', error);
-      throw error;
-    }
+  clearCache(): void {
+    this.cache = null;
+    this.sdk.debug?.('Configuration cache cleared');
   }
 
   /**
-   * Reset configuration manager state (useful for testing)
+   * Destroy manager and clean up resources
    */
-  public resetForTesting?(): void {
+  async destroy(): Promise<void> {
+    this.isInitialized = false;
     this.configuration = null;
     this.cache = null;
-    this.isInitialized = false;
+    this.subscriptions.clear();
     this.initializationPromise = null;
-    this.subscribers.clear();
+    this.sdk.debug?.('ConfigurationManager destroyed');
   }
 }

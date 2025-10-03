@@ -1,3 +1,6 @@
+// Import Reactory types
+import './reactory';
+
 // Navigation types
 export type RootStackParamList = {
   Home: undefined;
