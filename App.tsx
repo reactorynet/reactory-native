@@ -1,38 +1,46 @@
 /**
  * Reactory Native App
- * Modern React Native application with TypeScript, Redux Toolkit, React Navigation, and Apollo GraphQL
+ * 
+ * Modern React Native application with TypeScript, Redux Toolkit, 
+ * React Navigation, and Apollo GraphQL.
+ * 
+ * Uses the ReactorySDK for backend communication, authentication,
+ * and dynamic route configuration from the server.
+ * 
  * @format
+ * @version 1.1.0
+ * @updated February 1, 2026
  */
 
 import React from 'react';
-import { StatusBar, useColorScheme } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { Provider } from 'react-redux';
-import { ApolloProvider } from '@apollo/client';
-import { PaperProvider } from 'react-native-paper';
-import { AppNavigator } from './src/navigation/AppNavigator';
-import { store } from './src/store';
-import { apolloClient } from './src/services/apolloClient';
-import { lightTheme, darkTheme } from './src/themes';
+import { ReactoryApp } from './src/components/app';
+import { ReactoryNavigator } from './src/navigation/ReactoryNavigator';
 
+/**
+ * Main App Component
+ * 
+ * Wraps the application with ReactoryApp which handles:
+ * - SDK initialization
+ * - Authentication state management
+ * - Theme configuration
+ * - Provider composition (Apollo, Redux, Paper, etc.)
+ * 
+ * ReactoryNavigator handles:
+ * - Dynamic route configuration from server
+ * - Navigation structure based on API status
+ * - Role-based route access
+ */
 function App(): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
-  const theme = isDarkMode ? darkTheme : lightTheme;
-
   return (
-    <ApolloProvider client={apolloClient}>
-      <Provider store={store}>
-        <PaperProvider theme={theme}>
-          <SafeAreaProvider>
-            <StatusBar 
-              barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-              backgroundColor={theme.colors.surface}
-            />
-            <AppNavigator />
-          </SafeAreaProvider>
-        </PaperProvider>
-      </Provider>
-    </ApolloProvider>
+    <ReactoryApp>
+      <ReactoryNavigator 
+        navigationType="stack"
+        initialRouteName="Home"
+        onReady={() => {
+          console.log('[ReactoryNative] Navigation ready');
+        }}
+      />
+    </ReactoryApp>
   );
 }
 

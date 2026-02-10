@@ -5,11 +5,14 @@
  * for the ReactorySDK. Provides centralized network operations with retry logic,
  * offline support, and performance optimization.
  * 
- * @version 1.0.0
+ * @version 1.1.0
  * @created August 20, 2025
+ * @updated February 1, 2026 - Added Apollo Client integration
  */
 
 import { ReactorySDK } from './ReactorySDK';
+import type { ApolloClient, NormalizedCacheObject, DocumentNode } from '@apollo/client';
+import { gql } from '@apollo/client';
 
 // GraphQL Request Types
 export interface GraphQLRequest {
@@ -105,6 +108,10 @@ export class NetworkManager {
   private config: Required<NetworkManagerConfig>;
   private isInitialized: boolean = false;
   
+  // Apollo Client for real GraphQL operations
+  private apolloClient?: ApolloClient<NormalizedCacheObject>;
+  private useMockClient: boolean = true; // Set to false when Apollo Client is provided
+  
   // Network state
   private networkStatus: NetworkStatus;
   private requestQueue: Map<string, QueuedRequest> = new Map();
@@ -123,6 +130,9 @@ export class NetworkManager {
   constructor(reactory: ReactorySDK, config?: Partial<NetworkManagerConfig>) {
     this.reactory = reactory;
     this.config = this.mergeConfig(config);
+    
+    // Apollo Client will be set via setApolloClient() after construction
+    this.useMockClient = true;
     
     // Initialize network status
     this.networkStatus = {
@@ -364,6 +374,32 @@ export class NetworkManager {
     };
 
     return { unsubscribe, observable };
+  }
+
+  /**
+   * Sets the Apollo Client for real GraphQL operations
+   * Call this method to enable real server connections instead of mocks
+   */
+  setApolloClient(client: ApolloClient<NormalizedCacheObject>): void {
+    this.apolloClient = client;
+    this.useMockClient = false;
+    this.reactory.emit('networkManager.apolloClientConfigured', { 
+      clientName: (client as any).clientId || 'default',
+    });
+  }
+
+  /**
+   * Gets the Apollo Client instance
+   */
+  getApolloClient(): ApolloClient<NormalizedCacheObject> | undefined {
+    return this.apolloClient;
+  }
+
+  /**
+   * Checks if the manager is using real Apollo Client
+   */
+  isUsingRealClient(): boolean {
+    return !this.useMockClient && !!this.apolloClient;
   }
 
   /**
@@ -609,10 +645,118 @@ export class NetworkManager {
 
   private async executeGraphQLRequest<T>(
     request: GraphQLRequest | GraphQLMutation,
-    _options?: any
+    options?: {
+      timeout?: number;
+      context?: Record<string, any>;
+    }
   ): Promise<GraphQLResponse<T>> {
-    // Stubbed implementation - would use actual GraphQL client
-    await this.delay(Math.random() * 100 + 50); // Simulate network delay
+    // Use real Apollo Client if configured
+    if (this.apolloClient && !this.useMockClient) {
+      return await this.executeWithApolloClient<T>(request, options);
+    }
+    
+    // Fallback to mock implementation for testing
+    return await this.executeMockRequest<T>(request);
+  }
+
+  /**
+   * Executes a GraphQL request using Apollo Client
+   */
+  private async executeWithApolloClient<T>(
+    request: GraphQLRequest | GraphQLMutation,
+    options?: {
+      timeout?: number;
+      context?: Record<string, any>;
+    }
+  ): Promise<GraphQLResponse<T>> {
+    if (!this.apolloClient) {
+      throw new Error('Apollo Client not configured');
+    }
+
+    const documentNode = this.parseGraphQLQuery(request.query);
+    const isMutation = this.isMutation(request.query);
+
+    try {
+      if (isMutation) {
+        const result = await this.apolloClient.mutate<T>({
+          mutation: documentNode,
+          variables: request.variables,
+          context: {
+            ...options?.context,
+            ...request.context,
+          },
+        });
+
+        return {
+          data: result.data ?? undefined,
+          errors: result.errors?.map(e => ({
+            message: e.message,
+            locations: e.locations ? [...e.locations] : undefined,
+            path: e.path ? [...e.path] : undefined,
+            extensions: e.extensions as Record<string, any> | undefined,
+          })),
+        };
+      } else {
+        const result = await this.apolloClient.query<T>({
+          query: documentNode,
+          variables: request.variables,
+          context: {
+            ...options?.context,
+            ...request.context,
+          },
+          fetchPolicy: 'network-only', // Always fetch fresh data
+        });
+
+        return {
+          data: result.data,
+          errors: result.errors?.map(e => ({
+            message: e.message,
+            locations: e.locations ? [...e.locations] : undefined,
+            path: e.path ? [...e.path] : undefined,
+            extensions: e.extensions as Record<string, any> | undefined,
+          })),
+        };
+      }
+    } catch (error: any) {
+      // Convert Apollo errors to our format
+      const graphQLError = {
+        message: error.message || 'Unknown error',
+        extensions: error.extensions,
+      };
+
+      return {
+        errors: [graphQLError],
+      };
+    }
+  }
+
+  /**
+   * Parses a GraphQL query string into a DocumentNode
+   */
+  private parseGraphQLQuery(query: string): DocumentNode {
+    try {
+      return gql`${query}`;
+    } catch (error) {
+      throw new Error(`Failed to parse GraphQL query: ${error}`);
+    }
+  }
+
+  /**
+   * Determines if a query string is a mutation
+   */
+  private isMutation(query: string): boolean {
+    const trimmed = query.trim().toLowerCase();
+    return trimmed.startsWith('mutation');
+  }
+
+  /**
+   * Executes a mock request for testing purposes
+   */
+  private async executeMockRequest<T>(
+    request: GraphQLRequest | GraphQLMutation
+  ): Promise<GraphQLResponse<T>> {
+    // Simulate network delay
+    await this.delay(Math.random() * 100 + 50);
     
     // Mock successful response
     const mockResponse: GraphQLResponse<T> = {

@@ -10,13 +10,13 @@
  * @created August 18, 2025
  */
 
-import { ReactorySDKConfig } from './types';
+import { ReactorySDKConfig, IApiStatus, IApiStatusRequestOptions, User } from './types';
 import { ConfigurationManager } from './ConfigurationManager';
 import { FormSchemaManager } from './FormSchemaManager';
 import { NetworkManager } from './NetworkManager';
 import { ThemeManager } from './ThemeManager';
+import { ApiStatusManager } from './ApiStatusManager';
 import type { 
-  User, 
   Organization,
   UserMembership
 } from './types';
@@ -421,6 +421,7 @@ export class ReactorySDK extends EventEmitter {
   private _forms?: FormSchemaManager;
   private _network?: NetworkManager;
   private _theme?: ThemeManager;
+  private _apiStatus?: ApiStatusManager;
   private isInitializedFlag: boolean = false;
   private _isDestroyed: boolean = false;
   private readonly _user: User | null = null;
@@ -521,6 +522,13 @@ export class ReactorySDK extends EventEmitter {
         enableRealTimeUpdates: false,
       });
 
+      // Initialize API Status Manager
+      this._apiStatus = new ApiStatusManager(this, {
+        defaultTheme: this.config.theme,
+        defaultMode: 'light',
+        autoValidateToken: true,
+      });
+
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error during manager initialization';
       throw new Error(`Failed to initialize ReactorySDK managers: ${message}`);
@@ -563,6 +571,10 @@ export class ReactorySDK extends EventEmitter {
       }
       if (this._forms) {
         await this._forms.initialize();
+      }
+      // Initialize API Status Manager (after network is ready)
+      if (this._apiStatus) {
+        await this._apiStatus.initialize();
       }
 
       this.isInitializedFlag = true;
@@ -673,22 +685,84 @@ export class ReactorySDK extends EventEmitter {
     return this._theme;
   }
 
+  /**
+   * Get the API status manager instance
+   * @returns ApiStatusManager
+   * @throws Error if SDK not initialized
+   */
+  public get apiStatus(): ApiStatusManager {
+    if (!this._apiStatus) {
+      throw new Error('SDK not initialized. Call initialize() first.');
+    }
+    return this._apiStatus;
+  }
+
+  // ============================================================================
+  // Convenience API Status Methods
+  // ============================================================================
+
+  /**
+   * Fetches API status from the server
+   * Convenience method that delegates to apiStatus.status()
+   */
+  async status(options?: IApiStatusRequestOptions): Promise<IApiStatus | null> {
+    return this.apiStatus.status(options);
+  }
+
+  /**
+   * Gets the current user
+   * Convenience method that delegates to apiStatus.getUser()
+   */
+  getUser(): User | null {
+    return this._apiStatus?.getUser() || null;
+  }
+
+  /**
+   * Checks if a user is logged in
+   * Convenience method that delegates to apiStatus.isLoggedIn()
+   */
+  isLoggedIn(): boolean {
+    return this._apiStatus?.isLoggedIn() || false;
+  }
+
+  /**
+   * Checks if the API is online and reachable
+   */
+  isOnline(): boolean {
+    return this._apiStatus?.isOnline() || false;
+  }
+
   // ============================================================================
   // Legacy Compatibility Methods (Deprecated)
   // ============================================================================
 
   /**
-   * @deprecated Use configuration.get() instead
+   * Get configuration value
+   * Falls back to basic config when ConfigurationManager not initialized
+   * @deprecated Use configuration.get() instead for full functionality
    */
   public getConfig<T>(key: string): T | undefined {
-    return this.configuration.get<T>(key);
+    // If ConfigurationManager is available, use it
+    if (this._configuration) {
+      return this._configuration.get<T>(key);
+    }
+    // Fall back to basic config object for pre-initialization access
+    return (this.config as any)[key] as T | undefined;
   }
 
   /**
-   * @deprecated Use configuration.set() instead
+   * Set configuration value
+   * Falls back to basic config when ConfigurationManager not initialized
+   * @deprecated Use configuration.set() instead for full functionality
    */
   public setConfig(key: string, value: any): void {
-    this.configuration.set(key, value);
+    // If ConfigurationManager is available, use it
+    if (this._configuration) {
+      this._configuration.set(key, value);
+    } else {
+      // Fall back to basic config object for pre-initialization access
+      (this.config as any)[key] = value;
+    }
   }
 
   // ============================================================================

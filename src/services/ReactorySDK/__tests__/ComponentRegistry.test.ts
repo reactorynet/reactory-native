@@ -18,14 +18,14 @@ const MockComponent3: ReactComponentType = () => null;
 
 // Mock component options
 const defaultOptions: ComponentOptions = {
-  namespace: 'test',
+  nameSpace: 'test',
   version: '1.0.0',
   description: 'Test component',
   tags: ['test', 'mock']
 };
 
 const lazyOptions: ComponentOptions = {
-  namespace: 'lazy',
+  nameSpace: 'lazy',
   version: '1.0.0',
   lazy: true,
   dependencies: ['react'],
@@ -80,7 +80,7 @@ describe('ComponentRegistry', () => {
       
       const registered = registry.getAll().get('TestComponent');
       expect(registered).toBeDefined();
-      expect(registered!.options.namespace).toBe('test');
+      expect(registered!.options.nameSpace).toBe('test');
       expect(registered!.options.version).toBe('1.0.0');
       expect(registered!.options.tags).toEqual(['test', 'mock']);
     });
@@ -93,6 +93,9 @@ describe('ComponentRegistry', () => {
       registry.register('TestComponent', MockComponent, defaultOptions);
       
       expect(mockEmit).toHaveBeenCalledWith('component:registered', {
+        fqn: 'test.TestComponent@1.0.0',
+        nameSpace: 'test',
+        version: '1.0.0',
         name: 'TestComponent',
         component: MockComponent,
         options: defaultOptions

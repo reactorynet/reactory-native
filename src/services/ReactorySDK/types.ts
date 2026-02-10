@@ -166,6 +166,271 @@ export interface IApiStatusRequestOptions {
   mode?: string;
 }
 
+// ============================================================================
+// API Status Types
+// ============================================================================
+
+/**
+ * Server information from API status
+ */
+export interface IServerInfo {
+  id: string;
+  version: string;
+  started: string;
+  clients: Array<{
+    id: string;
+    clientKey: string;
+    name: string;
+    siteUrl: string;
+  }>;
+}
+
+/**
+ * Logged in user context
+ */
+export interface ILoggedInContext {
+  user: User | null;
+  organization: Organization | null;
+  team: {
+    id: string;
+    name: string;
+  } | null;
+  businessUnit: {
+    id: string;
+    name: string;
+    avatar?: string;
+  } | null;
+  roles: string[];
+  altRoles?: string[];
+  memberships: UserMembership[];
+}
+
+/**
+ * Theme mode definition
+ */
+export interface IThemeMode {
+  id: string;
+  name: string;
+  description?: string;
+  icon?: string;
+}
+
+/**
+ * Theme asset definition
+ */
+export interface IThemeAsset {
+  id: string;
+  name: string;
+  assetType: string;
+  url?: string;
+  loader?: string;
+  options?: Record<string, unknown>;
+  data?: unknown;
+}
+
+/**
+ * Active theme from API status
+ */
+export interface IActiveTheme {
+  id: string;
+  type: string;
+  name: string;
+  nameSpace: string;
+  version: string;
+  description?: string;
+  modes?: IThemeMode[];
+  options?: Record<string, unknown>;
+  assets?: IThemeAsset[];
+}
+
+/**
+ * Theme summary (for theme list)
+ */
+export interface IThemeSummary {
+  id: string;
+  type: string;
+  name: string;
+  nameSpace: string;
+  version: string;
+  description?: string;
+}
+
+/**
+ * Route argument
+ */
+export interface IRouteArg {
+  key: string;
+  value: string;
+}
+
+/**
+ * Route component definition
+ */
+export interface IRouteComponent {
+  nameSpace: string;
+  name: string;
+  version: string;
+  args?: IRouteArg[];
+  title?: string;
+  description?: string;
+  roles?: string[];
+}
+
+/**
+ * Application route definition
+ */
+export interface IRoute {
+  id: string;
+  path: string;
+  public: boolean;
+  roles?: string[];
+  componentFqn: string;
+  exact?: boolean;
+  redirect?: string;
+  componentProps?: Record<string, unknown>;
+  args?: IRouteArg[];
+  components?: IRouteComponent[];
+}
+
+/**
+ * Menu entry item (nested)
+ */
+export interface IMenuEntryItem {
+  id: string;
+  ordinal: number;
+  title: string;
+  link: string;
+  external?: boolean;
+  icon?: string;
+  roles?: string[];
+}
+
+/**
+ * Menu entry definition
+ */
+export interface IMenuEntry {
+  id: string;
+  ordinal: number;
+  title: string;
+  link: string;
+  external?: boolean;
+  icon?: string;
+  roles?: string[];
+  items?: IMenuEntryItem[];
+}
+
+/**
+ * Menu definition
+ */
+export interface IMenu {
+  id: string;
+  key: string;
+  name: string;
+  target?: string;
+  roles?: string[];
+  entries: IMenuEntry[];
+}
+
+/**
+ * Message action definition
+ */
+export interface IMessageAction {
+  id: string;
+  action: string;
+  icon?: string;
+  componentFqn?: string;
+  componentProps?: Record<string, unknown>;
+  modal?: boolean;
+  modalSize?: string;
+  priority?: number;
+}
+
+/**
+ * Application message
+ */
+export interface IMessage {
+  id: string;
+  title: string;
+  text?: string;
+  data?: unknown;
+  via?: string;
+  icon?: string;
+  image?: string;
+  requireInteraction?: boolean;
+  silent?: boolean;
+  timestamp?: string;
+  actions?: IMessageAction[];
+}
+
+/**
+ * Navigation component definition
+ */
+export interface INavigationComponent {
+  componentFqn: string;
+  componentProps?: Record<string, unknown>;
+  componentPropertyMap?: Record<string, string>;
+  componentKey?: string;
+  componentContext?: string;
+  contextType?: string;
+}
+
+/**
+ * Plugin definition
+ */
+export interface IPlugin {
+  id: string;
+  nameSpace: string;
+  name: string;
+  version: string;
+  description?: string;
+  platform?: string;
+  uri?: string;
+  mimeType?: string;
+  loader?: string;
+  options?: Record<string, unknown>;
+  enabled?: boolean;
+  roles?: string[];
+}
+
+/**
+ * API Status response from the server
+ */
+export interface IApiStatus {
+  // Application info
+  id?: string;
+  applicationName?: string;
+  applicationAvatar?: string;
+  applicationRoles?: string[];
+  when?: string;
+  status: string;
+  
+  // User context
+  loggedIn?: ILoggedInContext;
+  
+  // Theme
+  theme?: string;
+  activeTheme?: IActiveTheme;
+  themes?: IThemeSummary[];
+  
+  // Server
+  server?: IServerInfo;
+  
+  // Configuration
+  colorSchemes?: string[];
+  
+  // Navigation & UI
+  routes?: IRoute[];
+  menus?: IMenu[];
+  messages?: IMessage[];
+  navigationComponents?: INavigationComponent[];
+  
+  // Plugins
+  plugins?: IPlugin[];
+  
+  // Offline indicator
+  offline?: boolean;
+}
+
 /**
  * Async Message Queue events
  */
